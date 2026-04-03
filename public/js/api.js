@@ -67,7 +67,14 @@ const API = {
 
   // Spreadsheet
   spreadsheet: {
-    applicants: () => API.get('/spreadsheet/applicants'),
+    applicants: (params) => {
+      const q = params ? '?' + new URLSearchParams(params).toString() : '';
+      return API.get(`/spreadsheet/applicants${q}`);
+    },
+    applicantsCount: (params) => {
+      const q = params ? '?' + new URLSearchParams(params).toString() : '';
+      return API.get(`/spreadsheet/applicants/count${q}`);
+    },
   },
 
   // Stats

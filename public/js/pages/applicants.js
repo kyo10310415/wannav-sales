@@ -1,34 +1,85 @@
 // Applicants Page
 const ApplicantsPage = {
-  applicants: [],
-  filteredApplicants: [],
+  applicants: [],        // 全データ（バックエンドでソート済み）
+  filteredApplicants: [], // フィルタ後
   reports: [],
-  headers: [],
+  visibleHeaders: [],
   currentPage: 1,
   perPage: 20,
-  searchQuery: '',
-  loading: false,
   error: null,
+
+  // フィルタ・ソート状態
+  searchQuery: '',
+  filterResult: '',   // 営業報告の結果フィルタ
+  filterDateFrom: '',
+  filterDateTo: '',
+  sortCol: null,      // null = 応募日降順（デフォルト）
+  sortDir: 'desc',
 
   render() {
     return `
       <div class="page-header">
         <div>
           <div class="page-title"><i class="fas fa-users" style="margin-right:8px;color:var(--primary)"></i>応募者一覧</div>
-          <div class="page-subtitle">スプレッドシートから取得（重複除外済み）</div>
+          <div class="page-subtitle">スプレッドシートから取得（重複除外・応募日降順）</div>
         </div>
-        <button class="btn btn-secondary" id="refresh-btn" onclick="ApplicantsPage.loadData()">
+        <button class="btn btn-secondary" onclick="ApplicantsPage.loadData()">
           <i class="fas fa-sync-alt"></i> 更新
         </button>
       </div>
       <div class="page-body">
-        <div class="toolbar">
-          <div class="search-wrapper">
-            <i class="fas fa-search"></i>
-            <input type="text" class="search-input" id="applicant-search" placeholder="名前・メールで検索..." style="width:100%">
+
+        <!-- フィルターバー -->
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-body" style="padding:12px 16px">
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+
+              <!-- テキスト検索 -->
+              <div style="flex:1;min-width:180px">
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:4px">フリー検索</div>
+                <div class="search-wrapper" style="max-width:100%">
+                  <i class="fas fa-search"></i>
+                  <input type="text" class="search-input" id="applicant-search"
+                    placeholder="氏名・メールアドレス..." style="width:100%">
+                </div>
+              </div>
+
+              <!-- 応募日（From） -->
+              <div>
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:4px">応募日 From</div>
+                <input type="date" id="filter-date-from" class="form-control" style="width:140px">
+              </div>
+
+              <!-- 応募日（To） -->
+              <div>
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:4px">応募日 To</div>
+                <input type="date" id="filter-date-to" class="form-control" style="width:140px">
+              </div>
+
+              <!-- 結果フィルタ -->
+              <div>
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:4px">営業報告の結果</div>
+                <select id="filter-result" class="form-control" style="width:130px">
+                  <option value="">すべて</option>
+                  <option value="contract">契約のみ</option>
+                  <option value="reported">報告あり</option>
+                  <option value="unreported">未報告</option>
+                </select>
+              </div>
+
+              <!-- リセット -->
+              <div>
+                <button class="btn btn-secondary btn-sm" onclick="ApplicantsPage.resetFilters()" style="margin-top:auto">
+                  <i class="fas fa-times"></i> リセット
+                </button>
+              </div>
+
+              <span id="applicant-count" style="font-size:13px;color:var(--gray-500);align-self:center;margin-left:auto;white-space:nowrap"></span>
+            </div>
           </div>
-          <span id="applicant-count" style="font-size:13px;color:var(--gray-500)"></span>
         </div>
+
+        <!-- テーブル -->
         <div class="card">
           <div class="card-body" style="padding:0">
             <div id="applicants-table-wrap">
@@ -42,13 +93,31 @@ const ApplicantsPage = {
   },
 
   async mount() {
+    // フリー検索
     document.getElementById('applicant-search').addEventListener('input',
       Utils.debounce((e) => {
         this.searchQuery = e.target.value.toLowerCase();
         this.currentPage = 1;
         this.filterAndRender();
-      }, 300)
+      }, 250)
     );
+    // 日付フィルタ
+    document.getElementById('filter-date-from').addEventListener('change', (e) => {
+      this.filterDateFrom = e.target.value;
+      this.currentPage = 1;
+      this.filterAndRender();
+    });
+    document.getElementById('filter-date-to').addEventListener('change', (e) => {
+      this.filterDateTo = e.target.value;
+      this.currentPage = 1;
+      this.filterAndRender();
+    });
+    // 結果フィルタ
+    document.getElementById('filter-result').addEventListener('change', (e) => {
+      this.filterResult = e.target.value;
+      this.currentPage = 1;
+      this.filterAndRender();
+    });
 
     await this.loadData();
   },
@@ -56,9 +125,9 @@ const ApplicantsPage = {
   async loadData() {
     const wrap = document.getElementById('applicants-table-wrap');
     if (!wrap) return;
-
     wrap.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><span>スプレッドシートを読み込み中...</span></div>`;
-    document.getElementById('applicant-count').textContent = '';
+    const countEl = document.getElementById('applicant-count');
+    if (countEl) countEl.textContent = '';
 
     try {
       const [sheetData, reportsData] = await Promise.all([
@@ -66,10 +135,9 @@ const ApplicantsPage = {
         API.salesReports.list()
       ]);
       this.applicants = sheetData.applicants || [];
-      this.headers = sheetData.headers || [];
+      this.visibleHeaders = sheetData.visibleHeaders || [];
       this.reports = reportsData || [];
       this.error = null;
-
       this.filterAndRender();
     } catch (err) {
       this.error = err.message;
@@ -79,22 +147,20 @@ const ApplicantsPage = {
             <i class="fas fa-exclamation-triangle"></i>
             <div>
               <strong>スプレッドシートの読み込みに失敗しました</strong><br>
-              <span style="font-size:12px">${Utils.escHtml(err.message)}</span><br>
-              <span style="font-size:12px;color:var(--gray-500)">Google APIキーまたはサービスアカウント認証情報の設定が必要です。</span>
+              <span style="font-size:12px">${Utils.escHtml(err.message)}</span>
             </div>
           </div>
           <div class="alert alert-info">
             <i class="fas fa-info-circle"></i>
             <div>
               <strong>設定方法</strong><br>
-              <span style="font-size:12px">環境変数 <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> にサービスアカウントのJSONを設定するか、<br>
-              <code>GOOGLE_API_KEY</code> にAPIキーを設定してください。<br>
-              スプレッドシートは公開または共有されている必要があります。</span>
+              <span style="font-size:12px">
+                環境変数 <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> にサービスアカウントのJSONを設定するか、<br>
+                <code>GOOGLE_API_KEY</code> にAPIキーを設定してください。
+              </span>
             </div>
           </div>
-        </div>
-      `;
-      document.getElementById('applicant-count').textContent = '';
+        </div>`;
     }
   },
 
@@ -105,113 +171,227 @@ const ApplicantsPage = {
     } catch (e) {}
   },
 
-  filterAndRender() {
-    const q = this.searchQuery;
-    this.filteredApplicants = q
-      ? this.applicants.filter(a =>
-          a.full_name.toLowerCase().includes(q) ||
-          (a.email || '').toLowerCase().includes(q) ||
-          (a.columns.A || '').toLowerCase().includes(q)
-        )
-      : this.applicants;
+  resetFilters() {
+    this.searchQuery = '';
+    this.filterDateFrom = '';
+    this.filterDateTo = '';
+    this.filterResult = '';
+    this.sortCol = null;
+    this.sortDir = 'desc';
+    this.currentPage = 1;
+    // UIリセット
+    const s = document.getElementById('applicant-search');
+    if (s) s.value = '';
+    const df = document.getElementById('filter-date-from');
+    if (df) df.value = '';
+    const dt = document.getElementById('filter-date-to');
+    if (dt) dt.value = '';
+    const fr = document.getElementById('filter-result');
+    if (fr) fr.value = '';
+    this.filterAndRender();
+  },
 
-    const total = this.filteredApplicants.length;
+  getReportForApplicant(a) {
+    return this.reports.find(r =>
+      (a.email && r.applicant_email === a.email) ||
+      (r.applicant_full_name === a.full_name)
+    ) || null;
+  },
+
+  filterAndRender() {
+    let list = [...this.applicants];
+
+    // テキスト検索
+    if (this.searchQuery) {
+      const q = this.searchQuery;
+      list = list.filter(a =>
+        (a.full_name || '').toLowerCase().includes(q) ||
+        (a.email || '').toLowerCase().includes(q)
+      );
+    }
+
+    // 応募日フィルタ
+    if (this.filterDateFrom) {
+      const from = new Date(this.filterDateFrom);
+      list = list.filter(a => {
+        if (!a.date_parsed) return false;
+        return new Date(a.date_parsed) >= from;
+      });
+    }
+    if (this.filterDateTo) {
+      const to = new Date(this.filterDateTo);
+      to.setHours(23, 59, 59, 999);
+      list = list.filter(a => {
+        if (!a.date_parsed) return false;
+        return new Date(a.date_parsed) <= to;
+      });
+    }
+
+    // 結果フィルタ
+    if (this.filterResult) {
+      list = list.filter(a => {
+        const report = this.getReportForApplicant(a);
+        if (this.filterResult === 'contract') {
+          return report && (report.result?.includes('契約') || report.result === '契約');
+        } else if (this.filterResult === 'reported') {
+          return !!report;
+        } else if (this.filterResult === 'unreported') {
+          return !report;
+        }
+        return true;
+      });
+    }
+
+    // カラムソート（nullの場合は応募日降順 = バックエンドから受け取った順）
+    if (this.sortCol !== null) {
+      list.sort((a, b) => {
+        const va = (a.visible_data[this.sortCol]?.value || '').toLowerCase();
+        const vb = (b.visible_data[this.sortCol]?.value || '').toLowerCase();
+        if (va < vb) return this.sortDir === 'asc' ? -1 : 1;
+        if (va > vb) return this.sortDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    this.filteredApplicants = list;
     const countEl = document.getElementById('applicant-count');
-    if (countEl) countEl.textContent = `${total}件`;
+    if (countEl) countEl.textContent = `${list.length}件`;
 
     this.renderTable();
     this.renderPagination();
   },
 
-  getReportForApplicant(applicant) {
-    // Match by email or name
-    return this.reports.find(r =>
-      (applicant.email && r.applicant_email === applicant.email) ||
-      (r.applicant_full_name === applicant.full_name)
-    ) || null;
+  sortByCol(colIdx) {
+    if (this.sortCol === colIdx) {
+      this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      this.sortCol = colIdx;
+      this.sortDir = 'asc';
+    }
+    this.currentPage = 1;
+    this.filterAndRender();
+  },
+
+  sortIcon(colIdx) {
+    if (this.sortCol !== colIdx) return '<i class="fas fa-sort" style="color:var(--gray-300);font-size:10px;margin-left:3px"></i>';
+    return this.sortDir === 'asc'
+      ? '<i class="fas fa-sort-up" style="color:var(--primary);font-size:10px;margin-left:3px"></i>'
+      : '<i class="fas fa-sort-down" style="color:var(--primary);font-size:10px;margin-left:3px"></i>';
   },
 
   renderTable() {
     const wrap = document.getElementById('applicants-table-wrap');
-    if (!wrap) return;
+    if (!wrap || this.error) return;
 
-    const { items, totalPages, total, page } = Utils.paginate(
-      this.filteredApplicants, this.currentPage, this.perPage
-    );
+    const { items } = Utils.paginate(this.filteredApplicants, this.currentPage, this.perPage);
 
     if (!this.filteredApplicants.length) {
-      if (this.error) return;
       wrap.innerHTML = `
         <div class="empty-state">
           <i class="fas fa-user-slash"></i>
-          <h3>${this.searchQuery ? '検索結果がありません' : '応募者データがありません'}</h3>
-          <p>${this.searchQuery ? '検索条件を変更してください' : 'スプレッドシートを確認してください'}</p>
-        </div>
-      `;
+          <h3>${this.searchQuery || this.filterDateFrom || this.filterDateTo || this.filterResult ? '条件に一致するデータがありません' : '応募者データがありません'}</h3>
+          <p>${this.searchQuery || this.filterDateFrom || this.filterDateTo || this.filterResult ? 'フィルター条件を変更してください' : 'スプレッドシートを確認してください'}</p>
+        </div>`;
       return;
     }
 
-    // Build header row from headers array
-    const h = this.headers;
+    const headers = this.visibleHeaders;
+
+    // 応募日列のインデックスを特定（visible_data内）
+    const dateColIdx = headers.findIndex(h =>
+      h && (h.trim().includes('応募日') || h.trim() === 'タイムスタンプ')
+    );
+
+    // ヘッダー行生成：氏名（本名）を先頭に固定
+    const headerCells = [
+      `<th style="white-space:nowrap;cursor:pointer;user-select:none" onclick="ApplicantsPage.sortByCol(-1)">
+        氏名（本名）${this.sortIcon(-1)}
+      </th>`
+    ];
+    headers.forEach((h, i) => {
+      // 応募日列は先頭付近に目立たせる
+      const isDateCol = i === dateColIdx;
+      headerCells.push(
+        `<th style="white-space:nowrap;cursor:pointer;user-select:none${isDateCol ? ';background:#eff6ff' : ''}"
+          onclick="ApplicantsPage.sortByCol(${i})">
+          ${Utils.escHtml(h)}${this.sortIcon(i)}
+        </th>`
+      );
+    });
+    headerCells.push(`<th style="text-align:center;white-space:nowrap">営業報告</th>`);
+
+    // 行生成
+    const rowsHtml = items.map(a => {
+      const report = this.getReportForApplicant(a);
+      const isContract = report && (report.result?.includes('契約') || report.result === '契約');
+      const rowBg = isContract ? 'background:#f0fdf4' : '';
+
+      // データセル（visible_data）
+      const dataCells = a.visible_data.map((col, i) => {
+        const isDateCol = i === dateColIdx;
+        const cellStyle = isDateCol
+          ? 'font-size:12px;white-space:nowrap;background:#eff6ff;font-weight:600'
+          : 'font-size:12px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis';
+        const val = col.value || '-';
+        return `<td style="${cellStyle}" title="${Utils.escHtml(col.value)}">${Utils.escHtml(val)}</td>`;
+      });
+
+      // 営業報告ボタン
+      // applicantのJSONをdata属性で安全に渡す
+      const safeId = `app-${a.row_index}`;
+
+      // Store applicant data globally for retrieval
+      ApplicantsPage._cache = ApplicantsPage._cache || {};
+      ApplicantsPage._cache[safeId] = a;
+
+      const reportCell = report
+        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+            ${isContract
+              ? '<span class="badge badge-contract" style="font-size:10px"><i class="fas fa-check"></i> 契約済</span>'
+              : `<span class="badge badge-default" style="font-size:10px">${Utils.escHtml(report.result || '報告あり')}</span>`
+            }
+            <button class="btn btn-secondary btn-xs" onclick="ApplicantsPage.editReport('${safeId}',${report.id})">
+              <i class="fas fa-edit"></i> 編集
+            </button>
+          </div>`
+        : `<button class="btn btn-primary btn-sm" onclick="ApplicantsPage.openSalesReport('${safeId}')">
+            <i class="fas fa-plus"></i> 営業報告
+          </button>`;
+
+      return `
+        <tr style="${rowBg}">
+          <td style="white-space:nowrap;font-weight:600;font-size:13px">
+            ${Utils.escHtml(a.full_name) || '-'}
+          </td>
+          ${dataCells.join('')}
+          <td style="text-align:center;white-space:nowrap">${reportCell}</td>
+        </tr>`;
+    }).join('');
+
     wrap.innerHTML = `
-      <div class="scroll-hint"><i class="fas fa-arrows-alt-h"></i> 横スクロール可能</div>
-      <div style="overflow-x:auto">
-        <table style="min-width:1200px">
-          <thead>
-            <tr>
-              ${h.slice(0, 27).map((header, i) => `<th style="font-size:10px;padding:8px 8px">${Utils.escHtml(header) || String.fromCharCode(65 + i)}</th>`).join('')}
-              <th style="text-align:center;white-space:nowrap">営業報告</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${items.map(a => {
-              const report = this.getReportForApplicant(a);
-              const cols = a.columns;
-              const colValues = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','AA'];
-              const isContract = report && (report.result?.includes('契約') || report.result === '契約');
-              const rowStyle = isContract ? 'background:#f0fdf4' : '';
-              return `
-                <tr style="${rowStyle}">
-                  ${colValues.map(c => `<td style="font-size:12px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis" title="${Utils.escHtml(cols[c])}">${Utils.escHtml(cols[c]) || '-'}</td>`).join('')}
-                  <td style="text-align:center;white-space:nowrap">
-                    ${report
-                      ? `
-                        <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
-                          ${isContract
-                            ? '<span class="badge badge-contract" style="font-size:10px"><i class="fas fa-check"></i> 契約済</span>'
-                            : `<span class="badge badge-default" style="font-size:10px">${Utils.escHtml(report.result || '報告あり')}</span>`
-                          }
-                          <button class="btn btn-secondary btn-xs" onclick="ApplicantsPage.editReport('${Utils.escHtml(JSON.stringify(a))}', ${report.id})">
-                            <i class="fas fa-edit"></i> 編集
-                          </button>
-                        </div>
-                      `
-                      : `<button class="btn btn-primary btn-sm" onclick="ApplicantsPage.openSalesReport('${Utils.escHtml(JSON.stringify(a))}')">
-                          <i class="fas fa-plus"></i> 営業報告
-                        </button>`
-                    }
-                  </td>
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
+      <div class="scroll-hint" style="padding:6px 12px 2px;font-size:11px;color:var(--gray-400)">
+        <i class="fas fa-arrows-alt-h"></i> 横スクロール可 &nbsp;|&nbsp;
+        <i class="fas fa-sort-amount-down"></i> ヘッダークリックでソート
       </div>
-    `;
+      <div style="overflow-x:auto">
+        <table style="min-width:900px">
+          <thead>
+            <tr>${headerCells.join('')}</tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>`;
   },
 
   renderPagination() {
     const paginEl = document.getElementById('applicants-pagination');
     if (!paginEl) return;
 
-    const { totalPages, total, page } = Utils.paginate(
-      this.filteredApplicants, this.currentPage, this.perPage
-    );
+    const total = this.filteredApplicants.length;
+    const totalPages = Math.ceil(total / this.perPage);
+    const page = this.currentPage;
 
-    if (totalPages <= 1) {
-      paginEl.innerHTML = '';
-      return;
-    }
+    if (totalPages <= 1) { paginEl.innerHTML = ''; return; }
 
     const start = (page - 1) * this.perPage + 1;
     const end = Math.min(page * this.perPage, total);
@@ -222,7 +402,7 @@ const ApplicantsPage = {
       if (i === 1 || i === totalPages || (i >= page - range && i <= page + range)) {
         pageButtons += `<button class="page-btn ${i === page ? 'active' : ''}" onclick="ApplicantsPage.goPage(${i})">${i}</button>`;
       } else if (i === page - range - 1 || i === page + range + 1) {
-        pageButtons += `<span style="padding:0 4px;color:var(--gray-400)">...</span>`;
+        pageButtons += `<span style="padding:0 4px;color:var(--gray-400)">…</span>`;
       }
     }
 
@@ -230,16 +410,15 @@ const ApplicantsPage = {
       <div class="pagination">
         <span>${start}〜${end}件 / 全${total}件</span>
         <div class="pagination-controls">
-          <button class="page-btn" onclick="ApplicantsPage.goPage(${page - 1})" ${page <= 1 ? 'disabled' : ''}>
+          <button class="page-btn" onclick="ApplicantsPage.goPage(${page-1})" ${page<=1?'disabled':''}>
             <i class="fas fa-chevron-left"></i>
           </button>
           ${pageButtons}
-          <button class="page-btn" onclick="ApplicantsPage.goPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>
+          <button class="page-btn" onclick="ApplicantsPage.goPage(${page+1})" ${page>=totalPages?'disabled':''}>
             <i class="fas fa-chevron-right"></i>
           </button>
         </div>
-      </div>
-    `;
+      </div>`;
   },
 
   goPage(page) {
@@ -251,20 +430,18 @@ const ApplicantsPage = {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   },
 
-  openSalesReport(applicantJson) {
-    try {
-      const applicant = JSON.parse(applicantJson);
-      SalesReportModal.open(applicant, null);
-    } catch (e) {
-      Utils.notify('エラーが発生しました', 'error');
-    }
+  openSalesReport(safeId) {
+    const a = this._cache?.[safeId];
+    if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
+    SalesReportModal.open(a, null);
   },
 
-  async editReport(applicantJson, reportId) {
+  async editReport(safeId, reportId) {
+    const a = this._cache?.[safeId];
+    if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
     try {
-      const applicant = JSON.parse(applicantJson);
       const report = await API.salesReports.get(reportId);
-      SalesReportModal.open(applicant, report);
+      SalesReportModal.open(a, report);
     } catch (e) {
       Utils.notify('エラーが発生しました', 'error');
     }
