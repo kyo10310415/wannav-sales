@@ -3,6 +3,7 @@ const StatsPage = {
   currentType: 'month', // 'week' or 'month'
   currentPeriod: '',
   applicantCount: 0,
+  cvContractCount: 0,   // CV=TRUEの件数
   allPeriods: [],
   loadingApplicantCount: false,
 
@@ -102,7 +103,7 @@ const StatsPage = {
     ]);
   },
 
-  // 選択中の期間のスプレッドシート応募数を取得
+  // 選択中の期間のスプレッドシート応募数＆CV=TRUE件数を取得
   async fetchApplicantCount() {
     if (!this.currentPeriod) return;
 
@@ -118,10 +119,11 @@ const StatsPage = {
         value: this.currentPeriod
       });
       this.applicantCount = data.count || 0;
+      this.cvContractCount = data.cv_count || 0;  // CV=TRUE件数を保持
       if (inputEl) inputEl.value = this.applicantCount;
     } catch (e) {
-      // エラー時はスプレッドシート未設定として0のまま
       this.applicantCount = 0;
+      this.cvContractCount = 0;
       if (inputEl) inputEl.value = 0;
     } finally {
       if (loadingEl) loadingEl.style.display = 'none';
@@ -170,7 +172,8 @@ const StatsPage = {
       const data = await API.stats.summary({
         period: this.currentType,
         value: this.currentPeriod,
-        applicant_count: this.applicantCount
+        applicant_count: this.applicantCount,
+        cv_contract_count: this.cvContractCount,  // CV=TRUE件数を渡す
       });
 
       const periodLabel = this.currentType === 'month'
@@ -193,6 +196,10 @@ const StatsPage = {
             <div class="cvr-breakdown">
               <span><i class="fas fa-clipboard-check" style="margin-right:4px;color:var(--primary)"></i>面接実施数: <strong>${data.total_interviews}件</strong></span>
               <span><i class="fas fa-handshake" style="margin-right:4px;color:var(--success)"></i>契約数: <strong>${data.total_contracts}件</strong></span>
+              ${data.contracts_from_cv > 0 ? `
+              <span style="font-size:11px;color:var(--gray-400);padding-left:4px;border-left:2px solid var(--gray-200);margin-top:2px">
+                <i class="fas fa-table" style="margin-right:3px"></i>内訳: 営業報告 ${data.contracts_from_report}件 / CV列TRUE ${data.contracts_from_cv}件
+              </span>` : ''}
             </div>
           </div>
 
@@ -206,8 +213,7 @@ const StatsPage = {
             <div class="cvr-breakdown">
               <span>
                 <i class="fas fa-users" style="margin-right:4px;color:var(--secondary)"></i>
-                応募数
-                <span style="font-size:10px;color:var(--gray-400)">（${Utils.escHtml(periodLabel)}・重複除外）</span>:
+                応募数<span style="font-size:10px;color:var(--gray-400)">（${Utils.escHtml(periodLabel)}・重複除外）</span>:
                 <strong>${data.applicant_count}件</strong>
                 ${data.applicant_count === 0 ? '<span style="font-size:10px;color:var(--warning)"><i class="fas fa-exclamation-triangle"></i> スプレッドシート未設定</span>' : ''}
               </span>
@@ -224,7 +230,10 @@ const StatsPage = {
                 <strong style="font-size:22px">${data.total_interviews}</strong>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--success-light);border-radius:6px">
-                <span style="font-size:12px;color:var(--success)">契約数</span>
+                <div>
+                  <div style="font-size:12px;color:var(--success)">契約数</div>
+                  ${data.contracts_from_cv > 0 ? `<div style="font-size:10px;color:var(--gray-400)">営業報告 ${data.contracts_from_report} / CV=TRUE ${data.contracts_from_cv}</div>` : ''}
+                </div>
                 <strong style="font-size:22px;color:var(--success)">${data.total_contracts}</strong>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--primary-light);border-radius:6px">

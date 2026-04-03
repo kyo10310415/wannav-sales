@@ -3,69 +3,65 @@ const router = express.Router();
 const db = require('../database');
 const { authenticateToken } = require('../middleware/auth');
 
-// Helper: get week string like YYYY-WXX
-function getWeekString(date) {
-  const d = new Date(date);
-  const year = d.getFullYear();
-  const startOfYear = new Date(year, 0, 1);
-  const weekNum = Math.ceil(((d - startOfYear) / 86400000 + startOfYear.getDay() + 1) / 7);
-  return `${year}-W${String(weekNum).padStart(2, '0')}`;
-}
+// ============================================================
+// 契約判定SQL（営業報告の result に「契約」を含む）
+// ============================================================
+const CONTRACT_CONDITION = `(result LIKE '%契約%' OR result = '契約')`;
 
-// GET /api/stats/weekly - 週次CVR一覧
+// ============================================================
+// GET /api/stats/weekly
+// ============================================================
 router.get('/weekly', authenticateToken, (req, res) => {
-  const weeks = db.prepare(`
+  const data = db.prepare(`
     SELECT
       strftime('%Y-W%W', created_at) as period,
       COUNT(*) as total_interviews,
-      SUM(CASE WHEN result LIKE '%契約%' OR result = '契約' THEN 1 ELSE 0 END) as total_contracts
+      SUM(CASE WHEN ${CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
     FROM sales_reports
     GROUP BY period
     ORDER BY period DESC
     LIMIT 24
   `).all();
 
-  const result = weeks.map(w => ({
-    period: w.period,
-    total_interviews: w.total_interviews,
-    total_contracts: w.total_contracts,
-    cvr_interview: w.total_interviews > 0
-      ? ((w.total_contracts / w.total_interviews) * 100).toFixed(1)
-      : '0.0',
-  }));
-
-  res.json(result);
+  res.json(data.map(d => ({
+    ...d,
+    cvr_interview: d.total_interviews > 0
+      ? ((d.total_contracts / d.total_interviews) * 100).toFixed(1) : '0.0',
+  })));
 });
 
-// GET /api/stats/monthly - 月次CVR一覧
+// ============================================================
+// GET /api/stats/monthly
+// ============================================================
 router.get('/monthly', authenticateToken, (req, res) => {
-  const months = db.prepare(`
+  const data = db.prepare(`
     SELECT
       strftime('%Y-%m', created_at) as period,
       COUNT(*) as total_interviews,
-      SUM(CASE WHEN result LIKE '%契約%' OR result = '契約' THEN 1 ELSE 0 END) as total_contracts
+      SUM(CASE WHEN ${CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
     FROM sales_reports
     GROUP BY period
     ORDER BY period DESC
     LIMIT 24
   `).all();
 
-  const result = months.map(m => ({
-    period: m.period,
-    total_interviews: m.total_interviews,
-    total_contracts: m.total_contracts,
-    cvr_interview: m.total_interviews > 0
-      ? ((m.total_contracts / m.total_interviews) * 100).toFixed(1)
-      : '0.0',
-  }));
-
-  res.json(result);
+  res.json(data.map(d => ({
+    ...d,
+    cvr_interview: d.total_interviews > 0
+      ? ((d.total_contracts / d.total_interviews) * 100).toFixed(1) : '0.0',
+  })));
 });
 
-// GET /api/stats/cvr-with-applicants - 応募数含むCVR
-// applicant_count must be passed from spreadsheet data on frontend
+// ============================================================
+// GET /api/stats/summary
+// クエリパラメータ:
+//   period: 'week' | 'month'
+//   value: 'YYYY-WXX' | 'YYYY-MM'
+//   applicant_count: スプレッドシートからの応募数（期間内）
+//   cv_contract_count: スプレッドシートのCV=TRUEの件数（期間内）
+// ============================================================
 router.get('/summary', authenticateToken, (req, res) => {
-  const { period, value, applicant_count } = req.query;
+  const { period, value, applicant_count, cv_contract_count } = req.query;
 
   let dateFilter = '';
   let params = [];
@@ -78,80 +74,74 @@ router.get('/summary', authenticateToken, (req, res) => {
     params = [value];
   }
 
+  // 面接実施数（営業報告の総件数）
   const totalInterviews = db.prepare(`
     SELECT COUNT(*) as count FROM sales_reports ${dateFilter}
   `).get(...params);
 
-  const contractCondition = dateFilter
-    ? `${dateFilter} AND (result LIKE '%契約%' OR result = '契約')`
-    : "WHERE (result LIKE '%契約%' OR result = '契約')";
+  // 営業報告ベースの契約数
+  const contractFilterSQL = dateFilter
+    ? `${dateFilter} AND ${CONTRACT_CONDITION}`
+    : `WHERE ${CONTRACT_CONDITION}`;
 
-  const totalContracts = db.prepare(`
-    SELECT COUNT(*) as count FROM sales_reports ${contractCondition}
+  const contractsFromReport = db.prepare(`
+    SELECT COUNT(*) as count FROM sales_reports ${contractFilterSQL}
   `).get(...params);
+
+  // CV=TRUEの件数（スプレッドシートから渡される）
+  const cvContracts = parseInt(cv_contract_count) || 0;
+
+  // 契約数 = 営業報告の契約数 + CV=TRUE件数（重複を避けるため最大値）
+  // ※ 実際には営業報告のresultが「契約」 OR スプレッドシートのCVがTRUE
+  // より大きい方を使う（ただし両方ある場合の重複に注意）
+  // → ここでは「cv_contract_count」を優先（営業報告未入力でもTRUEなら契約）
+  const totalContracts = Math.max(contractsFromReport.count, cvContracts);
 
   const appCount = parseInt(applicant_count) || 0;
 
   const cvrInterview = totalInterviews.count > 0
-    ? ((totalContracts.count / totalInterviews.count) * 100).toFixed(1)
-    : '0.0';
-
+    ? ((totalContracts / totalInterviews.count) * 100).toFixed(1) : '0.0';
   const cvrApplicant = appCount > 0
-    ? ((totalContracts.count / appCount) * 100).toFixed(1)
-    : '0.0';
+    ? ((totalContracts / appCount) * 100).toFixed(1) : '0.0';
 
   res.json({
     period,
     value,
     total_interviews: totalInterviews.count,
-    total_contracts: totalContracts.count,
+    total_contracts: totalContracts,
+    contracts_from_report: contractsFromReport.count,
+    contracts_from_cv: cvContracts,
     applicant_count: appCount,
     cvr_interview: cvrInterview,
     cvr_applicant: cvrApplicant,
   });
 });
 
-// GET /api/stats/all-periods - 全期間サマリー
+// ============================================================
+// GET /api/stats/all-periods
+// ============================================================
 router.get('/all-periods', authenticateToken, (req, res) => {
-  const { type } = req.query; // 'week' or 'month'
+  const { type } = req.query;
 
-  if (type === 'week') {
-    const data = db.prepare(`
-      SELECT
-        strftime('%Y-W%W', created_at) as period,
-        COUNT(*) as total_interviews,
-        SUM(CASE WHEN result LIKE '%契約%' OR result = '契約' THEN 1 ELSE 0 END) as total_contracts
-      FROM sales_reports
-      GROUP BY period
-      ORDER BY period DESC
-      LIMIT 52
-    `).all();
+  const fmt = type === 'week' ? `strftime('%Y-W%W', created_at)` : `strftime('%Y-%m', created_at)`;
+  const limit = type === 'week' ? 52 : 24;
 
-    res.json(data.map(d => ({
-      ...d,
-      cvr_interview: d.total_interviews > 0
-        ? ((d.total_contracts / d.total_interviews) * 100).toFixed(1)
-        : '0.0'
-    })));
-  } else {
-    const data = db.prepare(`
-      SELECT
-        strftime('%Y-%m', created_at) as period,
-        COUNT(*) as total_interviews,
-        SUM(CASE WHEN result LIKE '%契約%' OR result = '契約' THEN 1 ELSE 0 END) as total_contracts
-      FROM sales_reports
-      GROUP BY period
-      ORDER BY period DESC
-      LIMIT 24
-    `).all();
+  const data = db.prepare(`
+    SELECT
+      ${fmt} as period,
+      COUNT(*) as total_interviews,
+      SUM(CASE WHEN ${CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
+    FROM sales_reports
+    GROUP BY period
+    ORDER BY period DESC
+    LIMIT ${limit}
+  `).all();
 
-    res.json(data.map(d => ({
-      ...d,
-      cvr_interview: d.total_interviews > 0
-        ? ((d.total_contracts / d.total_interviews) * 100).toFixed(1)
-        : '0.0'
-    })));
-  }
+  res.json(data.map(d => ({
+    ...d,
+    cvr_interview: d.total_interviews > 0
+      ? ((d.total_contracts / d.total_interviews) * 100).toFixed(1) : '0.0',
+  })));
 });
 
 module.exports = router;

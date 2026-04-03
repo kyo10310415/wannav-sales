@@ -7,11 +7,51 @@ const SPREADSHEET_ID = '1H0CctpkCJ4PVZ5cf1YYI7_elNwUu0uIcHIHMNTHYHW4';
 const SHEET_NAME = 'アススタ';
 const RANGE = `${SHEET_NAME}!A1:AA`;
 
-// 非表示にする列のヘッダー名（部分一致）
+// ============================================================
+// メモリキャッシュ（TTL: 5分）
+// ============================================================
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5分
+
+const cache = {
+  data: null,         // 処理済みデータ
+  rawRows: null,      // 生のrows（count用）
+  rawHeaders: null,
+  fetchedAt: null,    // 最終取得時刻
+  fetching: false,    // 取得中フラグ（重複リクエスト防止）
+  fetchPromise: null, // 進行中のfetchをまとめる
+
+  isValid() {
+    return this.data && this.fetchedAt && (Date.now() - this.fetchedAt < CACHE_TTL_MS);
+  },
+
+  set(data, rawRows, rawHeaders) {
+    this.data = data;
+    this.rawRows = rawRows;
+    this.rawHeaders = rawHeaders;
+    this.fetchedAt = Date.now();
+    this.fetching = false;
+    this.fetchPromise = null;
+    console.log(`[Cache] Updated: ${data.applicants.length} applicants at ${new Date().toISOString()}`);
+  },
+
+  clear() {
+    this.data = null;
+    this.rawRows = null;
+    this.rawHeaders = null;
+    this.fetchedAt = null;
+  },
+
+  ageSeconds() {
+    if (!this.fetchedAt) return null;
+    return Math.floor((Date.now() - this.fetchedAt) / 1000);
+  }
+};
+
+// ============================================================
+// 非表示列パターン
+// ============================================================
 const HIDDEN_COLUMN_PATTERNS = [
   'タイムスタンプ',
-  '性',       // 「性」単体（姓）
-  '名',       // 「名」単体
   '自己PR',
   '自動化処理済',
   '一次面接面接連絡済',
@@ -19,19 +59,16 @@ const HIDDEN_COLUMN_PATTERNS = [
   '飛びリマインド',
 ];
 
-// 列ヘッダーが非表示対象かチェック
 function isHiddenColumn(headerName) {
   if (!headerName) return false;
   const h = headerName.trim();
-  // 完全一致チェック（「性」「名」は完全一致のみ非表示）
   if (h === '性' || h === '名') return true;
-  // 部分一致チェック
-  return HIDDEN_COLUMN_PATTERNS.some(pattern => {
-    if (pattern === '性' || pattern === '名') return false; // 上で処理済み
-    return h.includes(pattern);
-  });
+  return HIDDEN_COLUMN_PATTERNS.some(pattern => h.includes(pattern));
 }
 
+// ============================================================
+// Google Sheets クライアント
+// ============================================================
 async function getGoogleSheetsClient() {
   const credentials = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (credentials) {
@@ -43,207 +80,288 @@ async function getGoogleSheetsClient() {
   } else if (process.env.GOOGLE_API_KEY) {
     return google.sheets({ version: 'v4', auth: process.env.GOOGLE_API_KEY });
   } else {
-    throw new Error('Google認証情報が設定されていません。環境変数 GOOGLE_SERVICE_ACCOUNT_JSON または GOOGLE_API_KEY を設定してください。');
+    throw new Error('Google認証情報が設定されていません');
   }
 }
 
-// 応募日文字列をDateオブジェクトに変換（日本語形式対応）
+// ============================================================
+// 日付パース・期間チェック
+// ============================================================
 function parseApplicantDate(dateStr) {
   if (!dateStr) return null;
-  // "2024/1/15 10:30:00" や "2024-01-15" など
   const d = new Date(dateStr.replace(/\//g, '-'));
-  if (!isNaN(d.getTime())) return d;
-  return null;
+  return isNaN(d.getTime()) ? null : d;
 }
 
-// 応募日が指定期間内かチェック
 function isInPeriod(dateStr, period, value) {
   if (!period || !value || !dateStr) return true;
   const d = parseApplicantDate(dateStr);
   if (!d) return true;
 
   if (period === 'month') {
-    // value: "YYYY-MM"
     const [year, month] = value.split('-');
     return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
   } else if (period === 'week') {
-    // value: "YYYY-WXX"
     const [yearStr, weekStr] = value.split('-W');
     const targetYear = parseInt(yearStr);
     const targetWeek = parseInt(weekStr);
-
     const startOfYear = new Date(targetYear, 0, 1);
     const dayOfYear = Math.floor((d - startOfYear) / 86400000);
     const weekNum = Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
-
     return d.getFullYear() === targetYear && weekNum === targetWeek;
   }
   return true;
 }
 
-// GET /api/spreadsheet/applicants
-router.get('/applicants', authenticateToken, async (req, res) => {
-  const { period, value } = req.query; // 期間フィルタ（オプション）
+// ============================================================
+// スプレッドシート取得・加工（共通処理）
+// ============================================================
+async function fetchAndProcessSheet() {
+  const sheets = await getGoogleSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: RANGE,
+  });
 
-  try {
-    const sheets = await getGoogleSheetsClient();
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: RANGE,
+  const rows = response.data.values;
+  if (!rows || rows.length < 2) {
+    return {
+      result: { applicants: [], headers: [], visibleHeaders: [], visibleColIndices: [], col_date_index: 0, col_date_header: '応募日', total: 0 },
+      rawRows: rows || [],
+      rawHeaders: rows?.[0] || [],
+    };
+  }
+
+  const rawHeaders = rows[0];
+  const dataRows = rows.slice(1);
+
+  // 列インデックス特定
+  const COL_LAST_NAME  = rawHeaders.findIndex(h => h && h.trim() === '性');
+  const COL_FIRST_NAME = rawHeaders.findIndex(h => h && h.trim() === '名');
+  const COL_EMAIL      = rawHeaders.findIndex(h => h && h.trim().includes('メールアドレス'));
+  const COL_CV         = rawHeaders.findIndex(h => h && h.trim() === 'CV'); // CV列
+  let   COL_DATE       = rawHeaders.findIndex(h => h && (h.trim().includes('応募日') || h.trim() === 'タイムスタンプ'));
+  if (COL_DATE === -1) COL_DATE = 0;
+
+  // 表示列
+  const visibleColIndices = rawHeaders.map((h, i) => i).filter(i => !isHiddenColumn(rawHeaders[i]));
+
+  // 重複除外＆処理
+  const seen = new Set();
+  const uniqueApplicants = [];
+
+  dataRows.forEach((row, rowIndex) => {
+    while (row.length < rawHeaders.length) row.push('');
+
+    const lastName  = COL_LAST_NAME >= 0  ? (row[COL_LAST_NAME] || '').trim()  : '';
+    const firstName = COL_FIRST_NAME >= 0 ? (row[COL_FIRST_NAME] || '').trim() : '';
+    const email     = COL_EMAIL >= 0      ? (row[COL_EMAIL] || '').trim()      : '';
+    const dateStr   = row[COL_DATE] || '';
+    // CV列の値：'TRUE' / 'FALSE' / '' — 大文字小文字どちらも対応
+    const cvValue   = COL_CV >= 0 ? (row[COL_CV] || '').trim().toUpperCase() : '';
+    const isCV      = cvValue === 'TRUE';
+
+    if (!lastName && !firstName && !email) return;
+
+    const key = `${lastName}|${firstName}|${email}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    const visibleData = visibleColIndices.map(i => ({
+      header: rawHeaders[i] || '',
+      value: row[i] || '',
+      colIndex: i,
+    }));
+
+    uniqueApplicants.push({
+      row_index: rowIndex + 2,
+      last_name: lastName,
+      first_name: firstName,
+      full_name: `${lastName}${firstName}`.trim() || `${lastName} ${firstName}`.trim(),
+      email,
+      date_str: dateStr,
+      date_parsed: parseApplicantDate(dateStr),
+      is_cv: isCV,           // CV=TRUE フラグ
+      visible_data: visibleData,
+      raw: rawHeaders.reduce((acc, h, i) => { acc[h || `col_${i}`] = row[i] || ''; return acc; }, {}),
     });
+  });
 
-    const rows = response.data.values;
-    if (!rows || rows.length < 2) {
-      return res.json({ applicants: [], headers: [], visibleHeaders: [], total: 0 });
-    }
+  // 応募日降順ソート
+  uniqueApplicants.sort((a, b) => {
+    const da = a.date_parsed ? a.date_parsed.getTime() : 0;
+    const db_ = b.date_parsed ? b.date_parsed.getTime() : 0;
+    return db_ - da;
+  });
 
-    const rawHeaders = rows[0];
-    const dataRows = rows.slice(1);
+  const visibleHeaders = visibleColIndices.map(i => rawHeaders[i] || '');
 
-    // 列のインデックスをヘッダー名で特定
-    const COL_LAST_NAME = rawHeaders.findIndex(h => h && h.trim() === '性');
-    const COL_FIRST_NAME = rawHeaders.findIndex(h => h && h.trim() === '名');
-    const COL_EMAIL = rawHeaders.findIndex(h => h && h.trim().includes('メールアドレス'));
-
-    // 応募日の列を特定（A列が応募日想定だが、ヘッダーでも探す）
-    let COL_DATE = rawHeaders.findIndex(h => h && (h.trim().includes('応募日') || h.trim() === 'タイムスタンプ'));
-    if (COL_DATE === -1) COL_DATE = 0; // fallback: A列
-
-    // 表示する列を決定（非表示列を除外、ただし性・名は full_name として別扱い）
-    const visibleColIndices = [];
-    rawHeaders.forEach((h, i) => {
-      if (!isHiddenColumn(h)) {
-        visibleColIndices.push(i);
-      }
-    });
-
-    // 重複除外（性・名・メール）
-    const seen = new Set();
-    const uniqueApplicants = [];
-
-    dataRows.forEach((row, rowIndex) => {
-      while (row.length < rawHeaders.length) row.push('');
-
-      const lastName = COL_LAST_NAME >= 0 ? (row[COL_LAST_NAME] || '').trim() : '';
-      const firstName = COL_FIRST_NAME >= 0 ? (row[COL_FIRST_NAME] || '').trim() : '';
-      const email = COL_EMAIL >= 0 ? (row[COL_EMAIL] || '').trim() : '';
-      const fullName = `${lastName}${firstName}`.trim();
-      const dateStr = row[COL_DATE] || '';
-
-      if (!lastName && !firstName && !email) return;
-
-      const key = `${lastName}|${firstName}|${email}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-
-      // 表示用の列データ（非表示列を除外）
-      const visibleData = visibleColIndices.map(i => ({
-        header: rawHeaders[i] || '',
-        value: row[i] || '',
-        colIndex: i,
-      }));
-
-      uniqueApplicants.push({
-        row_index: rowIndex + 2,
-        last_name: lastName,
-        first_name: firstName,
-        full_name: fullName || `${lastName} ${firstName}`.trim(),
-        email: email,
-        date_str: dateStr,
-        date_parsed: parseApplicantDate(dateStr),
-        visible_data: visibleData,
-        // 生の全列データ（営業報告モーダル用）
-        raw: rawHeaders.reduce((acc, h, i) => {
-          acc[h || `col_${i}`] = row[i] || '';
-          return acc;
-        }, {}),
-      });
-    });
-
-    // 応募日降順ソート
-    uniqueApplicants.sort((a, b) => {
-      const da = a.date_parsed ? a.date_parsed.getTime() : 0;
-      const db_ = b.date_parsed ? b.date_parsed.getTime() : 0;
-      return db_ - da; // 降順
-    });
-
-    // 期間フィルタが指定された場合、その期間の応募者数を返す
-    let periodCount = null;
-    if (period && value) {
-      periodCount = uniqueApplicants.filter(a => isInPeriod(a.date_str, period, value)).length;
-    }
-
-    // 表示用ヘッダー（非表示列除外）
-    const visibleHeaders = visibleColIndices.map(i => rawHeaders[i] || '');
-
-    res.json({
+  return {
+    result: {
       applicants: uniqueApplicants,
       headers: rawHeaders,
-      visibleHeaders: visibleHeaders,
-      visibleColIndices: visibleColIndices,
+      visibleHeaders,
+      visibleColIndices,
       col_date_index: COL_DATE,
       col_date_header: rawHeaders[COL_DATE] || '応募日',
+      col_cv_index: COL_CV,
       total: uniqueApplicants.length,
-      period_count: periodCount,
-    });
+    },
+    rawRows: rows,
+    rawHeaders,
+  };
+}
 
+// ============================================================
+// キャッシュ付きデータ取得（重複リクエストをまとめる）
+// ============================================================
+async function getCachedData(forceRefresh = false) {
+  if (!forceRefresh && cache.isValid()) {
+    return cache.data;
+  }
+
+  // 既に取得中なら同じPromiseを返す（リクエスト合流）
+  if (cache.fetching && cache.fetchPromise) {
+    return cache.fetchPromise;
+  }
+
+  cache.fetching = true;
+  cache.fetchPromise = fetchAndProcessSheet().then(({ result, rawRows, rawHeaders }) => {
+    cache.set(result, rawRows, rawHeaders);
+    return result;
+  }).catch(err => {
+    cache.fetching = false;
+    cache.fetchPromise = null;
+    throw err;
+  });
+
+  return cache.fetchPromise;
+}
+
+// サーバー起動直後にバックグラウンドで1回取得しておく（ウォームアップ）
+setTimeout(() => {
+  getCachedData().catch(err => {
+    // 認証情報が未設定の場合は無視
+    if (!err.message.includes('認証情報')) {
+      console.warn('[Cache warmup] Failed:', err.message);
+    }
+  });
+}, 3000);
+
+// 5分おきにバックグラウンド更新
+setInterval(() => {
+  getCachedData(true).catch(err => {
+    console.warn('[Cache refresh] Failed:', err.message);
+  });
+}, CACHE_TTL_MS);
+
+// ============================================================
+// GET /api/spreadsheet/applicants
+// ============================================================
+router.get('/applicants', authenticateToken, async (req, res) => {
+  const { period, value, refresh } = req.query;
+  const forceRefresh = refresh === '1';
+
+  try {
+    const data = await getCachedData(forceRefresh);
+
+    // 期間フィルタが指定された場合のカウント
+    let periodCount = null;
+    if (period && value) {
+      periodCount = data.applicants.filter(a => isInPeriod(a.date_str, period, value)).length;
+    }
+
+    // CV=TRUE の件数
+    const cvCount = data.applicants.filter(a => a.is_cv).length;
+
+    res.json({
+      ...data,
+      total: data.applicants.length,
+      period_count: periodCount,
+      cv_count: cvCount,
+      cached: cache.isValid(),
+      cache_age_seconds: cache.ageSeconds(),
+    });
   } catch (err) {
     console.error('Spreadsheet error:', err);
+
+    // キャッシュが古くても返せるなら返す（フォールバック）
+    if (cache.data) {
+      console.warn('[Cache] Returning stale cache due to error');
+      return res.json({
+        ...cache.data,
+        total: cache.data.applicants.length,
+        cached: true,
+        cache_age_seconds: cache.ageSeconds(),
+        stale: true,
+        error_message: err.message,
+      });
+    }
+
     res.status(500).json({
       error: 'スプレッドシートの取得に失敗しました: ' + err.message,
-      details: err.toString()
     });
   }
 });
 
-// GET /api/spreadsheet/applicants/count - 期間別応募数取得
+// ============================================================
+// GET /api/spreadsheet/applicants/count - 期間別応募数（キャッシュ活用）
+// ============================================================
 router.get('/applicants/count', authenticateToken, async (req, res) => {
   const { period, value } = req.query;
 
   try {
-    const sheets = await getGoogleSheetsClient();
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: RANGE,
+    const data = await getCachedData();
+
+    const count = (period && value)
+      ? data.applicants.filter(a => isInPeriod(a.date_str, period, value)).length
+      : data.applicants.length;
+
+    // 期間内のCV=TRUE件数も返す
+    const cvCount = (period && value)
+      ? data.applicants.filter(a => a.is_cv && isInPeriod(a.date_str, period, value)).length
+      : data.applicants.filter(a => a.is_cv).length;
+
+    res.json({
+      count,
+      cv_count: cvCount,
+      period,
+      value,
+      cached: cache.isValid(),
+      cache_age_seconds: cache.ageSeconds(),
     });
-
-    const rows = response.data.values;
-    if (!rows || rows.length < 2) {
-      return res.json({ count: 0, period, value });
-    }
-
-    const rawHeaders = rows[0];
-    const dataRows = rows.slice(1);
-
-    const COL_LAST_NAME = rawHeaders.findIndex(h => h && h.trim() === '性');
-    const COL_FIRST_NAME = rawHeaders.findIndex(h => h && h.trim() === '名');
-    const COL_EMAIL = rawHeaders.findIndex(h => h && h.trim().includes('メールアドレス'));
-    let COL_DATE = rawHeaders.findIndex(h => h && (h.trim().includes('応募日') || h.trim() === 'タイムスタンプ'));
-    if (COL_DATE === -1) COL_DATE = 0;
-
-    const seen = new Set();
-    let count = 0;
-
-    dataRows.forEach(row => {
-      while (row.length < rawHeaders.length) row.push('');
-      const lastName = COL_LAST_NAME >= 0 ? (row[COL_LAST_NAME] || '').trim() : '';
-      const firstName = COL_FIRST_NAME >= 0 ? (row[COL_FIRST_NAME] || '').trim() : '';
-      const email = COL_EMAIL >= 0 ? (row[COL_EMAIL] || '').trim() : '';
-      const dateStr = row[COL_DATE] || '';
-
-      if (!lastName && !firstName && !email) return;
-      const key = `${lastName}|${firstName}|${email}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-
-      if (isInPeriod(dateStr, period, value)) {
-        count++;
-      }
-    });
-
-    res.json({ count, period, value });
   } catch (err) {
-    res.status(500).json({ error: err.message, count: 0 });
+    res.status(500).json({ error: err.message, count: 0, cv_count: 0 });
+  }
+});
+
+// ============================================================
+// GET /api/spreadsheet/cache-status - キャッシュ状態確認
+// ============================================================
+router.get('/cache-status', authenticateToken, (req, res) => {
+  res.json({
+    cached: cache.isValid(),
+    fetched_at: cache.fetchedAt ? new Date(cache.fetchedAt).toISOString() : null,
+    cache_age_seconds: cache.ageSeconds(),
+    ttl_seconds: CACHE_TTL_MS / 1000,
+    total_applicants: cache.data?.applicants?.length ?? null,
+  });
+});
+
+// ============================================================
+// POST /api/spreadsheet/cache-clear - キャッシュ強制クリア
+// ============================================================
+router.post('/cache-clear', authenticateToken, async (req, res) => {
+  cache.clear();
+  try {
+    const data = await getCachedData(true);
+    res.json({
+      message: 'キャッシュを更新しました',
+      total: data.applicants.length,
+      fetched_at: new Date(cache.fetchedAt).toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'キャッシュ更新に失敗しました: ' + err.message });
   }
 });
 

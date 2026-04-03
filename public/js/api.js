@@ -75,6 +75,8 @@ const API = {
       const q = params ? '?' + new URLSearchParams(params).toString() : '';
       return API.get(`/spreadsheet/applicants/count${q}`);
     },
+    cacheStatus: () => API.get('/spreadsheet/cache-status'),
+    cacheClear: () => API.post('/spreadsheet/cache-clear'),
   },
 
   // Stats

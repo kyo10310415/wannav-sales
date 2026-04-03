@@ -7,6 +7,7 @@ const ApplicantsPage = {
   currentPage: 1,
   perPage: 20,
   error: null,
+  cacheInfo: null,       // キャッシュ情報
 
   // フィルタ・ソート状態
   searchQuery: '',
@@ -23,9 +24,15 @@ const ApplicantsPage = {
           <div class="page-title"><i class="fas fa-users" style="margin-right:8px;color:var(--primary)"></i>応募者一覧</div>
           <div class="page-subtitle">スプレッドシートから取得（重複除外・応募日降順）</div>
         </div>
-        <button class="btn btn-secondary" onclick="ApplicantsPage.loadData()">
-          <i class="fas fa-sync-alt"></i> 更新
-        </button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div id="cache-status-badge"></div>
+          <button class="btn btn-secondary" onclick="ApplicantsPage.loadData(false)">
+            <i class="fas fa-sync-alt"></i> 更新
+          </button>
+          <button class="btn btn-primary btn-sm" onclick="ApplicantsPage.forceRefresh()" title="スプレッドシートを今すぐ再取得">
+            <i class="fas fa-cloud-download-alt"></i> 強制更新
+          </button>
+        </div>
       </div>
       <div class="page-body">
 
@@ -122,22 +129,29 @@ const ApplicantsPage = {
     await this.loadData();
   },
 
-  async loadData() {
+  async loadData(useCache = true) {
     const wrap = document.getElementById('applicants-table-wrap');
     if (!wrap) return;
-    wrap.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><span>スプレッドシートを読み込み中...</span></div>`;
+    wrap.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><span>${useCache ? 'データを読み込み中...' : 'スプレッドシートを取得中...'}</span></div>`;
     const countEl = document.getElementById('applicant-count');
     if (countEl) countEl.textContent = '';
 
     try {
+      const params = useCache ? {} : { refresh: '1' };
       const [sheetData, reportsData] = await Promise.all([
-        API.spreadsheet.applicants(),
+        API.spreadsheet.applicants(params),
         API.salesReports.list()
       ]);
       this.applicants = sheetData.applicants || [];
       this.visibleHeaders = sheetData.visibleHeaders || [];
       this.reports = reportsData || [];
+      this.cacheInfo = {
+        cached: sheetData.cached,
+        age: sheetData.cache_age_seconds,
+        stale: sheetData.stale,
+      };
       this.error = null;
+      this.renderCacheBadge();
       this.filterAndRender();
     } catch (err) {
       this.error = err.message;
@@ -162,6 +176,30 @@ const ApplicantsPage = {
           </div>
         </div>`;
     }
+  },
+
+  async forceRefresh() {
+    const btn = document.querySelector('[onclick="ApplicantsPage.forceRefresh()"]');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 取得中...'; }
+    await this.loadData(false);
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> 強制更新'; }
+    Utils.notify('スプレッドシートを最新データで更新しました', 'success');
+  },
+
+  renderCacheBadge() {
+    const el = document.getElementById('cache-status-badge');
+    if (!el || !this.cacheInfo) return;
+    const age = this.cacheInfo.age;
+    const ageText = age !== null
+      ? (age < 60 ? `${age}秒前` : `${Math.floor(age/60)}分前`)
+      : '初回取得';
+    const color = this.cacheInfo.stale ? 'var(--warning)' : 'var(--success)';
+    const icon = this.cacheInfo.stale ? 'fa-exclamation-triangle' : 'fa-check-circle';
+    el.innerHTML = `
+      <span style="font-size:11px;color:${color};display:flex;align-items:center;gap:4px;background:white;border:1px solid var(--gray-200);border-radius:6px;padding:4px 8px">
+        <i class="fas ${icon}"></i>
+        ${this.cacheInfo.stale ? '古いキャッシュ' : `キャッシュ (${ageText})`}
+      </span>`;
   },
 
   async loadReports() {
