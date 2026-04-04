@@ -150,12 +150,13 @@ async function fetchAndProcessSheet() {
   // 列インデックス特定（実際のヘッダー名に合わせて完全一致）
   // A:タイムスタンプ B:応募日 C:応募月 D:姓 E:名 F:メールアドレス
   // R:面接実施 T:CV U:氏名（本名）
-  const COL_LAST_NAME  = rawHeaders.findIndex(h => h && h.trim() === '姓');           // D列
-  const COL_FIRST_NAME = rawHeaders.findIndex(h => h && h.trim() === '名');           // E列
-  const COL_EMAIL      = rawHeaders.findIndex(h => h && h.trim() === 'メールアドレス'); // F列
-  const COL_INTERVIEW  = rawHeaders.findIndex(h => h && h.trim() === '面接実施');     // R列
-  const COL_CV         = rawHeaders.findIndex(h => h && h.trim() === 'CV');            // T列
-  const COL_FULL_NAME  = rawHeaders.findIndex(h => h && h.trim() === '氏名（本名）'); // U列
+  const COL_LAST_NAME       = rawHeaders.findIndex(h => h && h.trim() === '姓');              // D列
+  const COL_FIRST_NAME      = rawHeaders.findIndex(h => h && h.trim() === '名');              // E列
+  const COL_EMAIL           = rawHeaders.findIndex(h => h && h.trim() === 'メールアドレス');  // F列
+  const COL_FIRST_INTERVIEW = rawHeaders.findIndex(h => h && h.trim() === '一次面接担当');   // L列（重複キー）
+  const COL_INTERVIEW       = rawHeaders.findIndex(h => h && h.trim() === '面接実施');        // R列
+  const COL_CV              = rawHeaders.findIndex(h => h && h.trim() === 'CV');               // T列
+  const COL_FULL_NAME       = rawHeaders.findIndex(h => h && h.trim() === '氏名（本名）');    // U列
   // 応募日: B列「応募日」を優先、なければA列「タイムスタンプ」
   let   COL_DATE       = rawHeaders.findIndex(h => h && h.trim() === '応募日');
   if (COL_DATE === -1) COL_DATE = rawHeaders.findIndex(h => h && h.trim() === 'タイムスタンプ');
@@ -164,8 +165,7 @@ async function fetchAndProcessSheet() {
   // 表示列
   const visibleColIndices = rawHeaders.map((h, i) => i).filter(i => !isHiddenColumn(rawHeaders[i]));
 
-  // 重複除外＆処理
-  const seen = new Set();
+  // レコード処理（「一次面接担当」=「ダブり」を除外）
   const uniqueApplicants = [];
 
   dataRows.forEach((row, rowIndex) => {
@@ -175,19 +175,22 @@ async function fetchAndProcessSheet() {
     const firstName  = COL_FIRST_NAME >= 0 ? (row[COL_FIRST_NAME] || '').trim() : '';
     const email      = COL_EMAIL >= 0      ? (row[COL_EMAIL] || '').trim()      : '';
     const dateStr    = row[COL_DATE] || '';
-    const cvValue       = COL_CV >= 0        ? (row[COL_CV]        || '').trim().toUpperCase() : '';
-    const isCV          = cvValue === 'TRUE';
-    const interviewValue = COL_INTERVIEW >= 0 ? (row[COL_INTERVIEW] || '').trim().toUpperCase() : '';
-    const isInterview   = interviewValue === 'TRUE';
+    const cvValue        = COL_CV >= 0             ? (row[COL_CV]             || '').trim().toUpperCase() : '';
+    const isCV           = cvValue === 'TRUE';
+    const interviewValue = COL_INTERVIEW >= 0      ? (row[COL_INTERVIEW]      || '').trim().toUpperCase() : '';
+    const isInterview    = interviewValue === 'TRUE';
     // 氏名（本名）列を優先、なければ姓+名を結合
     const fullNameCol = COL_FULL_NAME >= 0 ? (row[COL_FULL_NAME] || '').trim() : '';
     const fullName   = fullNameCol || `${lastName}${firstName}`.trim();
 
-    if (!lastName && !firstName && !email) return;
+    // 完全空行はスキップ
+    if (!fullName && !email && !dateStr) return;
 
-    const key = `${lastName}|${firstName}|${email}`;
-    if (seen.has(key)) return;
-    seen.add(key);
+    // 「一次面接担当」列が「ダブり」のレコードを除外
+    const firstInterviewVal = COL_FIRST_INTERVIEW >= 0
+      ? (row[COL_FIRST_INTERVIEW] || '').trim()
+      : '';
+    if (firstInterviewVal === 'ダブり') return;
 
     const visibleData = visibleColIndices.map(i => ({
       header: rawHeaders[i] || '',
