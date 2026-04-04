@@ -343,8 +343,6 @@ const StatsPage = {
   },
 
   formatWeekLabel(period) {
-    if (!period) return '';
-    const [year, week] = period.split('-W');
-    return `${year}年 第${parseInt(week)}週`;
+    return Utils.weekRangeLabel(period);
   }
 };
