@@ -317,6 +317,29 @@ const ApplicantsPage = {
       : '<i class="fas fa-sort-down" style="color:var(--primary);font-size:10px;margin-left:3px"></i>';
   },
 
+  // 列ごとの幅設定（visible_data のヘッダー名 → px）
+  // 横スクロールなしで1画面に収まるよう最適化
+  _colWidth(headerName) {
+    const map = {
+      '応募日':       '82px',
+      '応募月':       '64px',
+      '性別':         '44px',
+      '生年月日':     '82px',
+      '一次面接担当': '76px',
+      '二次面接担当': '76px',
+      '書類通過':     '58px',
+      '面接予約':     '58px',
+      '一次面接実施': '72px',
+      'AIレコメン実施':'80px',
+      '面接実施':     '60px',
+      '飛び':         '40px',
+      'CV':           '38px',
+      '広告媒体':     '70px',
+      'ブラックリスト':'76px',
+    };
+    return map[headerName ? headerName.trim() : ''] || '80px';
+  },
+
   renderTable() {
     const wrap = document.getElementById('applicants-table-wrap');
     if (!wrap || this.error) return;
@@ -335,32 +358,39 @@ const ApplicantsPage = {
 
     const headers = this.visibleHeaders;
 
-    // 応募日列のインデックスを特定（visible_data内 = 非表示列除外後のインデックス）
-    // タイムスタンプはHIDDEN_COLUMNS_EXACTで除外済みなので「応募日」のみ探せばよい
+    // 応募日列のインデックスを特定（visible_data内）
     const dateColIdx = (() => {
       const exact = headers.findIndex(h => h && h.trim() === '応募日');
       if (exact !== -1) return exact;
-      // フォールバック: タイムスタンプが表示されている場合（通常はない）
       return headers.findIndex(h => h && h.trim() === 'タイムスタンプ');
     })();
 
+    // <colgroup> で各列幅を固定
+    const colDefs = [
+      `<col style="width:110px;min-width:90px">` // 氏名（本名）
+    ];
+    headers.forEach(h => {
+      colDefs.push(`<col style="width:${this._colWidth(h)}">`);
+    });
+    colDefs.push(`<col style="width:80px;min-width:72px">`); // 営業報告
+
     // ヘッダー行生成：氏名（本名）を先頭に固定
     const headerCells = [
-      `<th style="white-space:nowrap;cursor:pointer;user-select:none" onclick="ApplicantsPage.sortByCol(-1)">
+      `<th style="cursor:pointer;user-select:none;font-size:11px;padding:6px 6px"
+          onclick="ApplicantsPage.sortByCol(-1)">
         氏名（本名）${this.sortIcon(-1)}
       </th>`
     ];
     headers.forEach((h, i) => {
-      // 応募日列は先頭付近に目立たせる
       const isDateCol = i === dateColIdx;
       headerCells.push(
-        `<th style="white-space:nowrap;cursor:pointer;user-select:none${isDateCol ? ';background:#eff6ff' : ''}"
+        `<th style="cursor:pointer;user-select:none;font-size:11px;padding:6px 4px;text-align:center${isDateCol ? ';background:#eff6ff' : ''}"
           onclick="ApplicantsPage.sortByCol(${i})">
           ${Utils.escHtml(h)}${this.sortIcon(i)}
         </th>`
       );
     });
-    headerCells.push(`<th style="text-align:center;white-space:nowrap">営業報告</th>`);
+    headerCells.push(`<th style="text-align:center;font-size:11px;padding:6px 4px">営業報告</th>`);
 
     // 行生成
     const rowsHtml = items.map(a => {
@@ -371,52 +401,54 @@ const ApplicantsPage = {
       // データセル（visible_data）
       const dataCells = a.visible_data.map((col, i) => {
         const isDateCol = i === dateColIdx;
-        const cellStyle = isDateCol
-          ? 'font-size:12px;white-space:nowrap;background:#eff6ff;font-weight:600'
-          : 'font-size:12px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis';
         const val = col.value || '-';
+        // 長い値はtooltipで確認できるよう省略
+        const cellStyle = isDateCol
+          ? 'font-size:11px;padding:5px 4px;background:#eff6ff;font-weight:600;white-space:nowrap;text-align:center'
+          : 'font-size:11px;padding:5px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0;text-align:center';
         return `<td style="${cellStyle}" title="${Utils.escHtml(col.value)}">${Utils.escHtml(val)}</td>`;
       });
 
       // 営業報告ボタン
-      // applicantのJSONをdata属性で安全に渡す
       const safeId = `app-${a.row_index}`;
-
-      // Store applicant data globally for retrieval
       ApplicantsPage._cache = ApplicantsPage._cache || {};
       ApplicantsPage._cache[safeId] = a;
 
       const reportCell = report
-        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
             ${isContract
-              ? '<span class="badge badge-contract" style="font-size:10px"><i class="fas fa-check"></i> 契約済</span>'
-              : `<span class="badge badge-default" style="font-size:10px">${Utils.escHtml(report.result || '報告あり')}</span>`
+              ? '<span style="font-size:9px;background:#dcfce7;color:#16a34a;border-radius:4px;padding:1px 5px;font-weight:700"><i class="fas fa-check"></i> 契約</span>'
+              : `<span style="font-size:9px;background:#f3f4f6;color:#374151;border-radius:4px;padding:1px 5px">${Utils.escHtml(report.result || '報告あり')}</span>`
             }
-            <button class="btn btn-secondary btn-xs" onclick="ApplicantsPage.editReport('${safeId}',${report.id})">
-              <i class="fas fa-edit"></i> 編集
+            <button class="btn btn-secondary btn-xs" style="font-size:10px;padding:2px 6px"
+              onclick="ApplicantsPage.editReport('${safeId}',${report.id})">
+              <i class="fas fa-edit"></i>
             </button>
           </div>`
-        : `<button class="btn btn-primary btn-sm" onclick="ApplicantsPage.openSalesReport('${safeId}')">
-            <i class="fas fa-plus"></i> 営業報告
+        : `<button class="btn btn-primary btn-xs" style="font-size:10px;padding:3px 6px"
+            onclick="ApplicantsPage.openSalesReport('${safeId}')">
+            <i class="fas fa-plus"></i> 報告
           </button>`;
 
       return `
         <tr style="${rowBg}">
-          <td style="white-space:nowrap;font-weight:600;font-size:13px">
+          <td style="font-weight:600;font-size:12px;padding:5px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0"
+              title="${Utils.escHtml(a.full_name)}">
             ${Utils.escHtml(a.full_name) || '-'}
           </td>
           ${dataCells.join('')}
-          <td style="text-align:center;white-space:nowrap">${reportCell}</td>
+          <td style="text-align:center;padding:4px 2px;white-space:nowrap">${reportCell}</td>
         </tr>`;
     }).join('');
 
     wrap.innerHTML = `
-      <div class="scroll-hint" style="padding:6px 12px 2px;font-size:11px;color:var(--gray-400)">
-        <i class="fas fa-arrows-alt-h"></i> 横スクロール可 &nbsp;|&nbsp;
-        <i class="fas fa-sort-amount-down"></i> ヘッダークリックでソート
+      <div style="padding:4px 10px 2px;font-size:10px;color:var(--gray-400)">
+        <i class="fas fa-sort-amount-down"></i> ヘッダークリックでソート &nbsp;|&nbsp;
+        <i class="fas fa-mouse-pointer"></i> セルにカーソルで全文表示
       </div>
       <div style="overflow-x:auto">
-        <table style="min-width:900px">
+        <table style="width:100%;table-layout:fixed;border-collapse:collapse">
+          <colgroup>${colDefs.join('')}</colgroup>
           <thead>
             <tr>${headerCells.join('')}</tr>
           </thead>
