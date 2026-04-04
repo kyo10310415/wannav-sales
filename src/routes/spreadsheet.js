@@ -149,10 +149,11 @@ async function fetchAndProcessSheet() {
 
   // 列インデックス特定（実際のヘッダー名に合わせて完全一致）
   // A:タイムスタンプ B:応募日 C:応募月 D:姓 E:名 F:メールアドレス
-  // T:CV U:氏名（本名）
+  // R:面接実施 T:CV U:氏名（本名）
   const COL_LAST_NAME  = rawHeaders.findIndex(h => h && h.trim() === '姓');           // D列
   const COL_FIRST_NAME = rawHeaders.findIndex(h => h && h.trim() === '名');           // E列
   const COL_EMAIL      = rawHeaders.findIndex(h => h && h.trim() === 'メールアドレス'); // F列
+  const COL_INTERVIEW  = rawHeaders.findIndex(h => h && h.trim() === '面接実施');     // R列
   const COL_CV         = rawHeaders.findIndex(h => h && h.trim() === 'CV');            // T列
   const COL_FULL_NAME  = rawHeaders.findIndex(h => h && h.trim() === '氏名（本名）'); // U列
   // 応募日: B列「応募日」を優先、なければA列「タイムスタンプ」
@@ -174,8 +175,10 @@ async function fetchAndProcessSheet() {
     const firstName  = COL_FIRST_NAME >= 0 ? (row[COL_FIRST_NAME] || '').trim() : '';
     const email      = COL_EMAIL >= 0      ? (row[COL_EMAIL] || '').trim()      : '';
     const dateStr    = row[COL_DATE] || '';
-    const cvValue    = COL_CV >= 0 ? (row[COL_CV] || '').trim().toUpperCase() : '';
-    const isCV       = cvValue === 'TRUE';
+    const cvValue       = COL_CV >= 0        ? (row[COL_CV]        || '').trim().toUpperCase() : '';
+    const isCV          = cvValue === 'TRUE';
+    const interviewValue = COL_INTERVIEW >= 0 ? (row[COL_INTERVIEW] || '').trim().toUpperCase() : '';
+    const isInterview   = interviewValue === 'TRUE';
     // 氏名（本名）列を優先、なければ姓+名を結合
     const fullNameCol = COL_FULL_NAME >= 0 ? (row[COL_FULL_NAME] || '').trim() : '';
     const fullName   = fullNameCol || `${lastName}${firstName}`.trim();
@@ -201,6 +204,7 @@ async function fetchAndProcessSheet() {
       date_str: dateStr,
       date_parsed: parseApplicantDate(dateStr),
       is_cv: isCV,
+      is_interview: isInterview,
       visible_data: visibleData,
       raw: rawHeaders.reduce((acc, h, i) => { acc[h || `col_${i}`] = row[i] || ''; return acc; }, {}),
     });
@@ -332,18 +336,22 @@ router.get('/applicants/count', authenticateToken, async (req, res) => {
   try {
     const data = await getCachedData();
 
-    const count = (period && value)
-      ? data.applicants.filter(a => isInPeriod(a.date_str, period, value)).length
-      : data.applicants.length;
+    const filtered = (period && value)
+      ? data.applicants.filter(a => isInPeriod(a.date_str, period, value))
+      : data.applicants;
 
-    // 期間内のCV=TRUE件数も返す
-    const cvCount = (period && value)
-      ? data.applicants.filter(a => a.is_cv && isInPeriod(a.date_str, period, value)).length
-      : data.applicants.filter(a => a.is_cv).length;
+    const count = filtered.length;
+
+    // 期間内のCV=TRUE件数
+    const cvCount = filtered.filter(a => a.is_cv).length;
+
+    // 期間内の面接実施=TRUE件数
+    const interviewCount = filtered.filter(a => a.is_interview).length;
 
     res.json({
       count,
       cv_count: cvCount,
+      interview_count: interviewCount,
       period,
       value,
       cached: cache.isValid(),

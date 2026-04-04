@@ -57,11 +57,12 @@ router.get('/monthly', authenticateToken, (req, res) => {
 // クエリパラメータ:
 //   period: 'week' | 'month'
 //   value: 'YYYY-WXX' | 'YYYY-MM'
-//   applicant_count: スプレッドシートからの応募数（期間内）
-//   cv_contract_count: スプレッドシートのCV=TRUEの件数（期間内）
+//   applicant_count:   スプレッドシートからの応募数（期間内・重複除外）
+//   cv_contract_count: スプレッドシートのCV=TRUE件数（期間内）
+//   interview_count:   スプレッドシートの面接実施=TRUE件数（期間内）
 // ============================================================
 router.get('/summary', authenticateToken, (req, res) => {
-  const { period, value, applicant_count, cv_contract_count } = req.query;
+  const { period, value, applicant_count, cv_contract_count, interview_count } = req.query;
 
   let dateFilter = '';
   let params = [];
@@ -74,12 +75,7 @@ router.get('/summary', authenticateToken, (req, res) => {
     params = [value];
   }
 
-  // 面接実施数（営業報告の総件数）
-  const totalInterviews = db.prepare(`
-    SELECT COUNT(*) as count FROM sales_reports ${dateFilter}
-  `).get(...params);
-
-  // 営業報告ベースの契約数
+  // 営業報告ベースの契約数（参考値）
   const contractFilterSQL = dateFilter
     ? `${dateFilter} AND ${CONTRACT_CONDITION}`
     : `WHERE ${CONTRACT_CONDITION}`;
@@ -88,26 +84,33 @@ router.get('/summary', authenticateToken, (req, res) => {
     SELECT COUNT(*) as count FROM sales_reports ${contractFilterSQL}
   `).get(...params);
 
+  // 面接実施数: スプレッドシートの「面接実施」=TRUE件数を優先
+  // 未設定（0）の場合は営業報告の件数をフォールバックとして使用
+  const interviewFromSheet = parseInt(interview_count) || 0;
+  const interviewFromDB = db.prepare(`
+    SELECT COUNT(*) as count FROM sales_reports ${dateFilter}
+  `).get(...params);
+  const totalInterviews = interviewFromSheet > 0 ? interviewFromSheet : interviewFromDB.count;
+
   // CV=TRUEの件数（スプレッドシートから渡される）
   const cvContracts = parseInt(cv_contract_count) || 0;
 
-  // 契約数 = 営業報告の契約数 + CV=TRUE件数（重複を避けるため最大値）
-  // ※ 実際には営業報告のresultが「契約」 OR スプレッドシートのCVがTRUE
-  // より大きい方を使う（ただし両方ある場合の重複に注意）
-  // → ここでは「cv_contract_count」を優先（営業報告未入力でもTRUEなら契約）
+  // 契約数 = CV=TRUE件数を優先（営業報告の契約数もフォールバック）
   const totalContracts = Math.max(contractsFromReport.count, cvContracts);
 
   const appCount = parseInt(applicant_count) || 0;
 
-  const cvrInterview = totalInterviews.count > 0
-    ? ((totalContracts / totalInterviews.count) * 100).toFixed(1) : '0.0';
+  const cvrInterview = totalInterviews > 0
+    ? ((totalContracts / totalInterviews) * 100).toFixed(1) : '0.0';
   const cvrApplicant = appCount > 0
     ? ((totalContracts / appCount) * 100).toFixed(1) : '0.0';
 
   res.json({
     period,
     value,
-    total_interviews: totalInterviews.count,
+    total_interviews: totalInterviews,
+    interview_from_sheet: interviewFromSheet,
+    interview_from_db: interviewFromDB.count,
     total_contracts: totalContracts,
     contracts_from_report: contractsFromReport.count,
     contracts_from_cv: cvContracts,

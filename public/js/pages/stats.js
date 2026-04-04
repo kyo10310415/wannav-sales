@@ -3,7 +3,8 @@ const StatsPage = {
   currentType: 'month', // 'week' or 'month'
   currentPeriod: '',
   applicantCount: 0,
-  cvContractCount: 0,   // CV=TRUEの件数
+  cvContractCount: 0,    // CV=TRUEの件数
+  interviewCount: 0,     // 面接実施=TRUEの件数（スプレッドシート）
   allPeriods: [],
   loadingApplicantCount: false,
 
@@ -118,8 +119,9 @@ const StatsPage = {
         period: this.currentType,
         value: this.currentPeriod
       });
-      this.applicantCount = data.count || 0;
-      this.cvContractCount = data.cv_count || 0;  // CV=TRUE件数を保持
+      this.applicantCount   = data.count         || 0;
+      this.cvContractCount  = data.cv_count       || 0;  // CV=TRUE件数
+      this.interviewCount   = data.interview_count || 0; // 面接実施=TRUE件数
       if (inputEl) inputEl.value = this.applicantCount;
     } catch (e) {
       this.applicantCount = 0;
@@ -172,8 +174,9 @@ const StatsPage = {
       const data = await API.stats.summary({
         period: this.currentType,
         value: this.currentPeriod,
-        applicant_count: this.applicantCount,
-        cv_contract_count: this.cvContractCount,  // CV=TRUE件数を渡す
+        applicant_count:   this.applicantCount,
+        cv_contract_count: this.cvContractCount,  // CV=TRUE件数
+        interview_count:   this.interviewCount,   // 面接実施=TRUE件数
       });
 
       const periodLabel = this.currentType === 'month'
@@ -194,8 +197,15 @@ const StatsPage = {
             </div>
             <div class="cvr-value">${data.cvr_interview}<span>%</span></div>
             <div class="cvr-breakdown">
-              <span><i class="fas fa-clipboard-check" style="margin-right:4px;color:var(--primary)"></i>面接実施数: <strong>${data.total_interviews}件</strong></span>
-              <span><i class="fas fa-handshake" style="margin-right:4px;color:var(--success)"></i>契約数: <strong>${data.total_contracts}件</strong></span>
+              <span>
+                <i class="fas fa-clipboard-check" style="margin-right:4px;color:var(--primary)"></i>
+                面接実施数: <strong>${data.total_interviews}件</strong>
+                ${data.interview_from_sheet > 0
+                  ? `<span style="font-size:10px;color:var(--gray-400);margin-left:4px">（シート 面接実施=TRUE）</span>`
+                  : `<span style="font-size:10px;color:var(--warning);margin-left:4px"><i class="fas fa-exclamation-triangle"></i> 営業報告件数で代替</span>`
+                }
+              </span>
+              <span><i class="fas fa-handshake" style="margin-right:4px;color:var(--success)"></i>契約数（CV=TRUE）: <strong>${data.total_contracts}件</strong></span>
               ${data.contracts_from_cv > 0 ? `
               <span style="font-size:11px;color:var(--gray-400);padding-left:4px;border-left:2px solid var(--gray-200);margin-top:2px">
                 <i class="fas fa-table" style="margin-right:3px"></i>内訳: 営業報告 ${data.contracts_from_report}件 / CV列TRUE ${data.contracts_from_cv}件
@@ -226,7 +236,15 @@ const StatsPage = {
             <div class="cvr-label"><i class="fas fa-chart-pie" style="margin-right:6px"></i>サマリー</div>
             <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
               <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--gray-50);border-radius:6px">
-                <span style="font-size:12px;color:var(--gray-600)">面接実施数</span>
+                <div>
+                  <div style="font-size:12px;color:var(--gray-600)">面接実施数</div>
+                  <div style="font-size:10px;color:var(--gray-400)">
+                    ${data.interview_from_sheet > 0
+                      ? 'シート 面接実施=TRUE'
+                      : '営業報告件数（シート未設定）'
+                    }
+                  </div>
+                </div>
                 <strong style="font-size:22px">${data.total_interviews}</strong>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--success-light);border-radius:6px">
