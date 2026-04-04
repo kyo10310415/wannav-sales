@@ -335,10 +335,14 @@ const ApplicantsPage = {
 
     const headers = this.visibleHeaders;
 
-    // 応募日列のインデックスを特定（visible_data内）
-    const dateColIdx = headers.findIndex(h =>
-      h && (h.trim().includes('応募日') || h.trim() === 'タイムスタンプ')
-    );
+    // 応募日列のインデックスを特定（visible_data内 = 非表示列除外後のインデックス）
+    // タイムスタンプはHIDDEN_COLUMNS_EXACTで除外済みなので「応募日」のみ探せばよい
+    const dateColIdx = (() => {
+      const exact = headers.findIndex(h => h && h.trim() === '応募日');
+      if (exact !== -1) return exact;
+      // フォールバック: タイムスタンプが表示されている場合（通常はない）
+      return headers.findIndex(h => h && h.trim() === 'タイムスタンプ');
+    })();
 
     // ヘッダー行生成：氏名（本名）を先頭に固定
     const headerCells = [

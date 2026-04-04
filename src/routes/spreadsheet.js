@@ -48,22 +48,31 @@ const cache = {
 };
 
 // ============================================================
-// 非表示列パターン
+// 非表示列（ヘッダー名完全一致）
+// 実際のスプレッドシートのヘッダー行 (A～AA列) に合わせて定義:
+//   A:タイムスタンプ B:応募日 C:応募月 D:姓 E:名 F:メールアドレス
+//   G:性別 H:生年月日 I:ご希望のユニット J:現在のご職業 K:自己PR
+//   L:一次面接担当 M:二次面接担当 N:書類通過 O:面接予約 P:一次面接実施
+//   Q:AIレコメン実施 R:面接実施 S:飛び T:CV U:氏名（本名）
+//   V:自動化処理済 W:一次面接面接連絡済 X:広告媒体 Y:リマインド送付時予約有無
+//   Z:飛びリマインド送付 AA:ブラックリスト
 // ============================================================
-const HIDDEN_COLUMN_PATTERNS = [
-  'タイムスタンプ',
-  '自己PR',
-  '自動化処理済',
-  '一次面接面接連絡済',
-  'リマインド送付時',
-  '飛びリマインド',
-];
+const HIDDEN_COLUMNS_EXACT = new Set([
+  'タイムスタンプ',          // A列
+  '姓',                      // D列
+  '名',                      // E列
+  '自己PR',                  // K列
+  '氏名（本名）',            // U列（先頭に固定表示するため列データからは除外）
+  '自動化処理済',            // V列
+  '一次面接面接連絡済',      // W列
+  'リマインド送付時予約有無',// Y列
+  '飛びリマインド送付',      // Z列
+]);
 
 function isHiddenColumn(headerName) {
   if (!headerName) return false;
   const h = headerName.trim();
-  if (h === '性' || h === '名') return true;
-  return HIDDEN_COLUMN_PATTERNS.some(pattern => h.includes(pattern));
+  return HIDDEN_COLUMNS_EXACT.has(h);
 }
 
 // ============================================================
@@ -135,12 +144,17 @@ async function fetchAndProcessSheet() {
   const rawHeaders = rows[0];
   const dataRows = rows.slice(1);
 
-  // 列インデックス特定
-  const COL_LAST_NAME  = rawHeaders.findIndex(h => h && h.trim() === '性');
-  const COL_FIRST_NAME = rawHeaders.findIndex(h => h && h.trim() === '名');
-  const COL_EMAIL      = rawHeaders.findIndex(h => h && h.trim().includes('メールアドレス'));
-  const COL_CV         = rawHeaders.findIndex(h => h && h.trim() === 'CV'); // CV列
-  let   COL_DATE       = rawHeaders.findIndex(h => h && (h.trim().includes('応募日') || h.trim() === 'タイムスタンプ'));
+  // 列インデックス特定（実際のヘッダー名に合わせて完全一致）
+  // A:タイムスタンプ B:応募日 C:応募月 D:姓 E:名 F:メールアドレス
+  // T:CV U:氏名（本名）
+  const COL_LAST_NAME  = rawHeaders.findIndex(h => h && h.trim() === '姓');           // D列
+  const COL_FIRST_NAME = rawHeaders.findIndex(h => h && h.trim() === '名');           // E列
+  const COL_EMAIL      = rawHeaders.findIndex(h => h && h.trim() === 'メールアドレス'); // F列
+  const COL_CV         = rawHeaders.findIndex(h => h && h.trim() === 'CV');            // T列
+  const COL_FULL_NAME  = rawHeaders.findIndex(h => h && h.trim() === '氏名（本名）'); // U列
+  // 応募日: B列「応募日」を優先、なければA列「タイムスタンプ」
+  let   COL_DATE       = rawHeaders.findIndex(h => h && h.trim() === '応募日');
+  if (COL_DATE === -1) COL_DATE = rawHeaders.findIndex(h => h && h.trim() === 'タイムスタンプ');
   if (COL_DATE === -1) COL_DATE = 0;
 
   // 表示列
@@ -153,13 +167,15 @@ async function fetchAndProcessSheet() {
   dataRows.forEach((row, rowIndex) => {
     while (row.length < rawHeaders.length) row.push('');
 
-    const lastName  = COL_LAST_NAME >= 0  ? (row[COL_LAST_NAME] || '').trim()  : '';
-    const firstName = COL_FIRST_NAME >= 0 ? (row[COL_FIRST_NAME] || '').trim() : '';
-    const email     = COL_EMAIL >= 0      ? (row[COL_EMAIL] || '').trim()      : '';
-    const dateStr   = row[COL_DATE] || '';
-    // CV列の値：'TRUE' / 'FALSE' / '' — 大文字小文字どちらも対応
-    const cvValue   = COL_CV >= 0 ? (row[COL_CV] || '').trim().toUpperCase() : '';
-    const isCV      = cvValue === 'TRUE';
+    const lastName   = COL_LAST_NAME >= 0  ? (row[COL_LAST_NAME] || '').trim()  : '';
+    const firstName  = COL_FIRST_NAME >= 0 ? (row[COL_FIRST_NAME] || '').trim() : '';
+    const email      = COL_EMAIL >= 0      ? (row[COL_EMAIL] || '').trim()      : '';
+    const dateStr    = row[COL_DATE] || '';
+    const cvValue    = COL_CV >= 0 ? (row[COL_CV] || '').trim().toUpperCase() : '';
+    const isCV       = cvValue === 'TRUE';
+    // 氏名（本名）列を優先、なければ姓+名を結合
+    const fullNameCol = COL_FULL_NAME >= 0 ? (row[COL_FULL_NAME] || '').trim() : '';
+    const fullName   = fullNameCol || `${lastName}${firstName}`.trim();
 
     if (!lastName && !firstName && !email) return;
 
@@ -177,11 +193,11 @@ async function fetchAndProcessSheet() {
       row_index: rowIndex + 2,
       last_name: lastName,
       first_name: firstName,
-      full_name: `${lastName}${firstName}`.trim() || `${lastName} ${firstName}`.trim(),
+      full_name: fullName,
       email,
       date_str: dateStr,
       date_parsed: parseApplicantDate(dateStr),
-      is_cv: isCV,           // CV=TRUE フラグ
+      is_cv: isCV,
       visible_data: visibleData,
       raw: rawHeaders.reduce((acc, h, i) => { acc[h || `col_${i}`] = row[i] || ''; return acc; }, {}),
     });
