@@ -26,6 +26,22 @@ const API = {
     const json = await response.json().catch(() => ({}));
 
     if (!response.ok) {
+      // 401/403 はセッション切れ → 自動ログアウトしてログイン画面へ
+      if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        // ページをリロードしてログイン画面に戻す
+        // (Auth/App が未ロードの場合でも確実に動作)
+        if (typeof Auth !== 'undefined') Auth.user = null;
+        if (typeof App !== 'undefined') {
+          App.showLogin();
+        } else {
+          window.location.reload();
+        }
+        const err = new Error('セッションの有効期限が切れました。再度ログインしてください。');
+        err.status = response.status;
+        throw err;
+      }
       const err = new Error(json.error || `HTTP ${response.status}`);
       err.status = response.status;
       err.data = json;

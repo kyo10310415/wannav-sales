@@ -20,10 +20,13 @@ const Auth = {
     this.user = user;
   },
 
-  logout() {
+  logout(redirect = true) {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     this.user = null;
+    if (redirect && typeof App !== 'undefined') {
+      App.showLogin();
+    }
   },
 
   isLoggedIn() {
