@@ -81,9 +81,17 @@ const SalesReportModal = {
                 <input type="text" id="sr-student-num" class="form-control" value="${Utils.escHtml(r.student_number || '')}" placeholder="学籍番号を入力">
               </div>
               <div class="form-group">
+                <label class="form-label"><i class="fas fa-calendar-alt" style="color:#7c3aed;margin-right:4px"></i>面接日</label>
+                <input type="date" id="sr-interview-date" class="form-control" value="${r.interview_date || ''}">
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
                 <label class="form-label">面接時間</label>
                 <input type="text" id="sr-interview-time" class="form-control" value="${Utils.escHtml(r.interview_time || '')}" placeholder="例: 60分">
               </div>
+              <div class="form-group"></div>
             </div>
 
             <div class="form-group">
@@ -178,6 +186,7 @@ const SalesReportModal = {
       applicant_first_name: this.applicant?.first_name || '',
       applicant_email: this.applicant?.email || '',
       student_number: document.getElementById('sr-student-num').value.trim(),
+      interview_date: document.getElementById('sr-interview-date').value || null,
       interview_time: document.getElementById('sr-interview-time').value.trim(),
       result: document.getElementById('sr-result').value.trim(),
       contract_plan: document.getElementById('sr-plan').value,
