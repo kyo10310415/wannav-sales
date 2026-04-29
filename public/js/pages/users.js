@@ -23,7 +23,7 @@ const UsersPage = {
                   <i class="fas fa-calendar-check" style="color:#7c3aed;margin-right:6px"></i>Googleカレンダー同期
                 </div>
                 <div style="font-size:11px;color:var(--gray-500);margin-top:2px">
-                  各ユーザーが自分のGoogleアカウントを連携すると、「面接予約」イベントから面接日を自動取得できます
+                  各ユーザーが左サイドバーの「Google連携する」で認証すると、「面接予約」イベントから面接日を自動取得できます
                 </div>
               </div>
               <button class="btn btn-sm" id="calendar-sync-btn"
@@ -32,18 +32,6 @@ const UsersPage = {
               </button>
             </div>
             <div id="calendar-sync-result" style="display:none;margin-top:10px"></div>
-          </div>
-        </div>
-
-        <!-- 自分のGoogle連携カード -->
-        <div class="card" style="margin-bottom:16px" id="my-google-card">
-          <div class="card-body" style="padding:12px 16px">
-            <div style="font-size:13px;font-weight:600;color:var(--gray-700);margin-bottom:8px">
-              <i class="fab fa-google" style="color:#4285f4;margin-right:6px"></i>自分のGoogleアカウント連携
-            </div>
-            <div id="my-google-status">
-              <div class="loading-spinner" style="justify-content:flex-start"><div class="spinner"></div><span>確認中...</span></div>
-            </div>
           </div>
         </div>
 
@@ -116,104 +104,9 @@ const UsersPage = {
     document.getElementById('user-modal-cancel').addEventListener('click', () => this.closeModal());
     document.getElementById('user-modal-save').addEventListener('click', () => this.saveUser());
     document.getElementById('calendar-sync-btn').addEventListener('click', () => this.runCalendarSync());
-
-    // Google連携状態を確認
-    this.loadMyGoogleStatus();
     await this.loadUsers();
   },
 
-  // ============================================================
-  // 自分のGoogle連携状態表示
-  // ============================================================
-  async loadMyGoogleStatus() {
-    const el = document.getElementById('my-google-status');
-    if (!el) return;
-    try {
-      const status = await API.calendar.status();
-      if (status.linked) {
-        el.innerHTML = `
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span style="background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;
-              border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600">
-              <i class="fas fa-check-circle"></i> 連携済み: ${Utils.escHtml(status.email)}
-            </span>
-            <button class="btn btn-secondary btn-sm" id="google-unlink-btn">
-              <i class="fas fa-unlink"></i> 連携解除
-            </button>
-          </div>`;
-        document.getElementById('google-unlink-btn')?.addEventListener('click', () => this.unlinkGoogle());
-      } else {
-        el.innerHTML = `
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span style="font-size:12px;color:var(--gray-500)">未連携</span>
-            <button class="btn btn-sm" id="google-link-btn"
-              style="background:#4285f4;border-color:#4285f4;color:white">
-              <i class="fab fa-google"></i> Googleアカウントを連携する
-            </button>
-          </div>`;
-        document.getElementById('google-link-btn')?.addEventListener('click', () => this.linkGoogle());
-      }
-    } catch (e) {
-      el.innerHTML = `<span style="font-size:12px;color:var(--gray-400)">状態を取得できませんでした</span>`;
-    }
-  },
-
-  // Google OAuth 連携開始（ポップアップ）
-  async linkGoogle() {
-    const btn = document.getElementById('google-link-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 処理中...'; }
-
-    try {
-      const { url } = await API.calendar.authUrl();
-      const popup = window.open(url, 'google_auth',
-        'width=600,height=700,scrollbars=yes,resizable=yes');
-
-      // ポップアップからのメッセージを待機
-      const handler = async (event) => {
-        if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
-          window.removeEventListener('message', handler);
-          Utils.notify(`Googleアカウントを連携しました（${event.data.email}）`, 'success');
-          await this.loadMyGoogleStatus();
-          await this.loadUsers();
-        } else if (event.data?.type === 'GOOGLE_AUTH_ERROR') {
-          window.removeEventListener('message', handler);
-          Utils.notify('連携に失敗しました: ' + event.data.error, 'error');
-          await this.loadMyGoogleStatus();
-        }
-      };
-      window.addEventListener('message', handler);
-
-      // ポップアップが閉じられたら状態を更新
-      const timer = setInterval(async () => {
-        if (popup.closed) {
-          clearInterval(timer);
-          window.removeEventListener('message', handler);
-          await this.loadMyGoogleStatus();
-        }
-      }, 1000);
-
-    } catch (err) {
-      Utils.notify('認証URLの取得に失敗しました: ' + err.message, 'error');
-      await this.loadMyGoogleStatus();
-    }
-  },
-
-  // Google連携解除
-  async unlinkGoogle() {
-    if (!confirm('Googleアカウントの連携を解除しますか？')) return;
-    try {
-      await API.calendar.revokeToken();
-      Utils.notify('Googleアカウントの連携を解除しました', 'success');
-      await this.loadMyGoogleStatus();
-      await this.loadUsers();
-    } catch (err) {
-      Utils.notify('解除に失敗しました: ' + err.message, 'error');
-    }
-  },
-
-  // ============================================================
-  // ユーザー一覧ロード
-  // ============================================================
   async loadUsers() {
     const wrap = document.getElementById('users-table-wrap');
     try {
@@ -242,7 +135,7 @@ const UsersPage = {
             <th>名前</th>
             <th>権限</th>
             <th style="min-width:130px">カレンダーID</th>
-            <th style="min-width:120px">Google連携</th>
+            <th style="min-width:130px">Google連携</th>
             <th>ステータス</th>
             <th>登録日</th>
             <th style="text-align:right">操作</th>
@@ -265,7 +158,9 @@ const UsersPage = {
               </td>
               <td style="font-size:11px">
                 ${u.google_email
-                  ? `<span style="background:#f0fdf4;color:#166534;border-radius:4px;padding:2px 7px;white-space:nowrap">
+                  ? `<span style="background:#f0fdf4;color:#166534;border-radius:4px;padding:2px 7px;
+                      display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                      title="${Utils.escHtml(u.google_email)}">
                       <i class="fas fa-check-circle"></i> ${Utils.escHtml(u.google_email)}</span>`
                   : '<span style="color:var(--gray-300)">未連携</span>'}
               </td>
@@ -298,19 +193,19 @@ const UsersPage = {
 
   openModal(userId = null) {
     this.editingUser = userId ? this.users.find(u => u.id === userId) : null;
-    const modal   = document.getElementById('user-modal');
-    const title   = document.getElementById('user-modal-title');
+    const modal    = document.getElementById('user-modal');
+    const title    = document.getElementById('user-modal-title');
     const passInfo = document.getElementById('user-pass-info');
-    const errorEl = document.getElementById('user-modal-error');
+    const errorEl  = document.getElementById('user-modal-error');
 
     errorEl.style.display = 'none';
     title.textContent = this.editingUser ? 'ユーザー編集' : 'ユーザー追加';
     passInfo.style.display = this.editingUser ? 'none' : 'flex';
 
-    document.getElementById('user-login-id').value   = this.editingUser?.login_id   || '';
-    document.getElementById('user-name').value       = this.editingUser?.name       || '';
-    document.getElementById('user-role').value       = this.editingUser?.role       || 'sales';
-    document.getElementById('user-calendar-id').value= this.editingUser?.calendar_id|| '';
+    document.getElementById('user-login-id').value    = this.editingUser?.login_id    || '';
+    document.getElementById('user-name').value        = this.editingUser?.name        || '';
+    document.getElementById('user-role').value        = this.editingUser?.role        || 'sales';
+    document.getElementById('user-calendar-id').value = this.editingUser?.calendar_id || '';
 
     modal.style.display = 'block';
     document.getElementById('user-login-id').focus();
@@ -384,7 +279,7 @@ const UsersPage = {
   },
 
   // ============================================================
-  // Googleカレンダー一括同期
+  // Googleカレンダー一括同期（管理者向け）
   // ============================================================
   async runCalendarSync() {
     const btn      = document.getElementById('calendar-sync-btn');
@@ -420,7 +315,7 @@ const UsersPage = {
       if (res.totalEvents === 0) {
         html += `<div style="font-size:11px;margin-top:6px;color:#92400e">
           <i class="fas fa-exclamation-triangle"></i>
-          イベントが0件でした。Google連携済みのユーザーのカレンダーIDが正しく設定されているか確認してください。
+          イベントが0件でした。サイドバーの「Google連携する」で各ユーザーが認証し、カレンダーIDも設定してください。
         </div>`;
       }
 
@@ -441,6 +336,10 @@ const UsersPage = {
 
       Utils.notify(`カレンダー同期完了：${res.matched}件の面接日を設定しました`, 'success');
 
+      // サイドバーの連携ボタンを再描画
+      if (typeof App !== 'undefined') App._mountGoogleBtn();
+
+      // 応募者一覧が表示中なら面接日を再ロード
       if (typeof ApplicantsPage !== 'undefined' && ApplicantsPage.applicants.length > 0) {
         try {
           ApplicantsPage.interviewDates = await API.interviewDates.list();
