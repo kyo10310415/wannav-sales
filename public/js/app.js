@@ -123,6 +123,13 @@ const App = {
                 <span>${n.label}</span>
               </div>
             `).join('')}
+            <a href="https://notebooklm.google.com/notebook/d3d56d61-e84f-49a5-ae12-6b22111479a8"
+              target="_blank" rel="noopener noreferrer"
+              class="nav-item"
+              style="margin-top:8px;background:#fef3c7;color:#92400e;text-decoration:none;border-left:3px solid #f59e0b">
+              <i class="fas fa-book-open" style="color:#f59e0b"></i>
+              <span>すくう君</span>
+            </a>
           </div>
           <div class="sidebar-footer">
             <div class="user-info">
@@ -138,12 +145,6 @@ const App = {
             <button id="sidebar-google-btn" class="btn btn-sm" style="width:100%;justify-content:center;margin-bottom:6px;font-size:11px;background:#4285f4;border-color:#4285f4;color:white">
               <i class="fab fa-google"></i> <span id="sidebar-google-label">Google連携を確認中...</span>
             </button>
-            <a href="https://notebooklm.google.com/notebook/d3d56d61-e84f-49a5-ae12-6b22111479a8"
-              target="_blank" rel="noopener noreferrer"
-              class="btn btn-sm"
-              style="width:100%;justify-content:center;margin-bottom:6px;font-size:11px;background:#f59e0b;border-color:#f59e0b;color:white;text-decoration:none;display:flex;align-items:center;gap:6px;box-sizing:border-box">
-              <i class="fas fa-book-open"></i> すくう君
-            </a>
             <button class="btn-logout" id="logout-btn">
               <i class="fas fa-sign-out-alt"></i> ログアウト
             </button>
