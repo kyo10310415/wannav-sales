@@ -4,6 +4,12 @@ const App = {
   changePasswordOverlay: null,
 
   pages: {
+    today: {
+      nav: 'nav-today',
+      module: () => TodayInterviewsPage,
+      title: '今日の面接',
+      adminOnly: false,
+    },
     applicants: {
       nav: 'nav-applicants',
       module: () => ApplicantsPage,
@@ -30,7 +36,7 @@ const App = {
     } else if (Auth.mustChangePassword()) {
       this.showChangePassword(true);
     } else {
-      this.navigate('applicants');
+      this.navigate('today');
     }
   },
 
@@ -69,7 +75,7 @@ const App = {
     }
 
     if (pageConfig.adminOnly && !Auth.isAdmin()) {
-      this.navigate('applicants');
+      this.navigate('today');
       return;
     }
 
@@ -86,6 +92,13 @@ const App = {
     const isAdmin = Auth.isAdmin();
 
     const navItems = [
+      {
+        id: 'nav-today',
+        page: 'today',
+        icon: 'fa-calendar-day',
+        label: '今日の面接',
+        show: true,
+      },
       {
         id: 'nav-applicants',
         page: 'applicants',
