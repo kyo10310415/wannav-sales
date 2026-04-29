@@ -17,6 +17,9 @@ const ApplicantsPage = {
   sortCol: null,      // null = 応募日降順（デフォルト）
   sortDir: 'desc',
 
+  // 面接日保存中フラグ（行ごと）
+  _savingInterviewDate: {},
+
   render() {
     return `
       <div class="page-header">
@@ -318,7 +321,6 @@ const ApplicantsPage = {
   },
 
   // 列ごとの幅設定（visible_data のヘッダー名 → px）
-  // 横スクロールなしで1画面に収まるよう最適化
   _colWidth(headerName) {
     const map = {
       '応募日':       '82px',
@@ -367,19 +369,23 @@ const ApplicantsPage = {
 
     // <colgroup> で各列幅を固定
     const colDefs = [
-      `<col style="width:110px;min-width:90px">` // 氏名（本名）
+      `<col style="width:110px;min-width:90px">`,  // 氏名（本名）
+      `<col style="width:100px;min-width:88px">`,  // 面接日
     ];
     headers.forEach(h => {
       colDefs.push(`<col style="width:${this._colWidth(h)}">`);
     });
     colDefs.push(`<col style="width:80px;min-width:72px">`); // 営業報告
 
-    // ヘッダー行生成：氏名（本名）を先頭に固定
+    // ヘッダー行生成：氏名（本名）を先頭、面接日を2列目に固定
     const headerCells = [
       `<th style="cursor:pointer;user-select:none;font-size:11px;padding:6px 6px"
           onclick="ApplicantsPage.sortByCol(-1)">
         氏名（本名）${this.sortIcon(-1)}
-      </th>`
+      </th>`,
+      `<th style="font-size:11px;padding:6px 4px;text-align:center;background:#faf5ff;color:#7c3aed;white-space:nowrap">
+        <i class="fas fa-calendar-alt" style="margin-right:3px;font-size:10px"></i>面接日
+      </th>`,
     ];
     headers.forEach((h, i) => {
       const isDateCol = i === dateColIdx;
@@ -398,11 +404,20 @@ const ApplicantsPage = {
       const isContract = report && (report.result?.includes('契約') || report.result === '契約');
       const rowBg = isContract ? 'background:#f0fdf4' : '';
 
+      // キャッシュキー
+      const safeId = `app-${a.row_index}`;
+      ApplicantsPage._cache = ApplicantsPage._cache || {};
+      ApplicantsPage._cache[safeId] = a;
+
+      // 面接日セル
+      const interviewDateVal = report?.interview_date || '';
+      const isSaving = !!this._savingInterviewDate[safeId];
+      const interviewDateCell = this._renderInterviewDateCell(safeId, report?.id || null, interviewDateVal, isSaving);
+
       // データセル（visible_data）
       const dataCells = a.visible_data.map((col, i) => {
         const isDateCol = i === dateColIdx;
         const val = col.value || '-';
-        // 長い値はtooltipで確認できるよう省略
         const cellStyle = isDateCol
           ? 'font-size:11px;padding:5px 4px;background:#eff6ff;font-weight:600;white-space:nowrap;text-align:center'
           : 'font-size:11px;padding:5px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0;text-align:center';
@@ -410,10 +425,6 @@ const ApplicantsPage = {
       });
 
       // 営業報告ボタン
-      const safeId = `app-${a.row_index}`;
-      ApplicantsPage._cache = ApplicantsPage._cache || {};
-      ApplicantsPage._cache[safeId] = a;
-
       const reportCell = report
         ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
             ${isContract
@@ -436,6 +447,9 @@ const ApplicantsPage = {
               title="${Utils.escHtml(a.full_name)}">
             ${Utils.escHtml(a.full_name) || '-'}
           </td>
+          <td style="padding:3px 4px;background:#faf5ff;text-align:center;white-space:nowrap">
+            ${interviewDateCell}
+          </td>
           ${dataCells.join('')}
           <td style="text-align:center;padding:4px 2px;white-space:nowrap">${reportCell}</td>
         </tr>`;
@@ -444,7 +458,8 @@ const ApplicantsPage = {
     wrap.innerHTML = `
       <div style="padding:4px 10px 2px;font-size:10px;color:var(--gray-400)">
         <i class="fas fa-sort-amount-down"></i> ヘッダークリックでソート &nbsp;|&nbsp;
-        <i class="fas fa-mouse-pointer"></i> セルにカーソルで全文表示
+        <i class="fas fa-mouse-pointer"></i> セルにカーソルで全文表示 &nbsp;|&nbsp;
+        <i class="fas fa-calendar-alt" style="color:#7c3aed"></i> <span style="color:#7c3aed">面接日</span>はカレンダーで入力・即時保存
       </div>
       <div style="overflow-x:auto">
         <table style="width:100%;table-layout:fixed;border-collapse:collapse">
@@ -455,6 +470,178 @@ const ApplicantsPage = {
           <tbody>${rowsHtml}</tbody>
         </table>
       </div>`;
+
+    // 面接日 input のイベントを一括バインド
+    this._bindInterviewDateEvents();
+  },
+
+  // -------------------------------------------------------
+  // 面接日セル HTML 生成
+  // -------------------------------------------------------
+  _renderInterviewDateCell(safeId, reportId, dateVal, isSaving) {
+    if (isSaving) {
+      return `<span style="font-size:10px;color:var(--gray-400)"><i class="fas fa-spinner fa-spin"></i></span>`;
+    }
+
+    // reportId がある場合のみ日付入力を活性化
+    // ない場合はグレーアウトして「報告後に入力可」を示す
+    if (reportId === null) {
+      return `
+        <span style="font-size:10px;color:var(--gray-300)" title="先に営業報告を作成してください">
+          <i class="fas fa-calendar-alt"></i> —
+        </span>`;
+    }
+
+    const displayVal = dateVal
+      ? (() => {
+          const d = new Date(dateVal);
+          return isNaN(d) ? dateVal : `${d.getMonth()+1}/${d.getDate()}`;
+        })()
+      : '';
+
+    return `
+      <div class="interview-date-wrap" style="position:relative;display:inline-block">
+        <input
+          type="date"
+          class="interview-date-input"
+          data-safe-id="${safeId}"
+          data-report-id="${reportId}"
+          value="${Utils.escHtml(dateVal)}"
+          title="${dateVal ? Utils.escHtml(dateVal) : '面接日を選択'}"
+          style="
+            width:88px;
+            padding:3px 4px 3px 20px;
+            font-size:11px;
+            border:1px solid #ddd8fe;
+            border-radius:5px;
+            background:white;
+            color:${dateVal ? '#5b21b6' : 'var(--gray-400)'};
+            cursor:pointer;
+            outline:none;
+          "
+        >
+        <i class="fas fa-calendar-alt" style="
+          position:absolute;
+          left:5px;
+          top:50%;
+          transform:translateY(-50%);
+          color:#a78bfa;
+          font-size:10px;
+          pointer-events:none;
+        "></i>
+        ${dateVal
+          ? `<span style="
+              position:absolute;
+              right:-2px;top:-5px;
+              width:14px;height:14px;
+              background:#7c3aed;
+              border-radius:50%;
+              display:flex;align-items:center;justify-content:center;
+              cursor:pointer;font-size:8px;color:white;
+            "
+            onclick="ApplicantsPage.clearInterviewDate('${safeId}', ${reportId})"
+            title="面接日をクリア">✕</span>`
+          : ''}
+      </div>`;
+  },
+
+  // -------------------------------------------------------
+  // 面接日 input イベント一括バインド（renderTable後に呼ぶ）
+  // -------------------------------------------------------
+  _bindInterviewDateEvents() {
+    const inputs = document.querySelectorAll('.interview-date-input');
+    inputs.forEach(input => {
+      input.addEventListener('change', (e) => {
+        const safeId   = e.target.dataset.safeId;
+        const reportId = parseInt(e.target.dataset.reportId);
+        const newDate  = e.target.value; // 'YYYY-MM-DD' or ''
+        this.saveInterviewDate(safeId, reportId, newDate);
+      });
+      // focus時: ブラウザのネイティブカレンダーを開く
+      input.addEventListener('focus', (e) => {
+        try { e.target.showPicker && e.target.showPicker(); } catch(_) {}
+      });
+    });
+  },
+
+  // -------------------------------------------------------
+  // 面接日を即時保存
+  // -------------------------------------------------------
+  async saveInterviewDate(safeId, reportId, newDate) {
+    if (this._savingInterviewDate[safeId]) return;
+    this._savingInterviewDate[safeId] = true;
+
+    // セルをスピナー表示
+    this._updateInterviewDateCell(safeId, null, null, true);
+
+    try {
+      // 現在の営業報告データを取得
+      const currentReport = await API.salesReports.get(reportId);
+
+      // interview_date だけ更新して PUT
+      await API.salesReports.update(reportId, {
+        ...currentReport,
+        interview_date: newDate || null,
+      });
+
+      // reportsキャッシュを更新
+      const idx = this.reports.findIndex(r => r.id === reportId);
+      if (idx !== -1) {
+        this.reports[idx] = { ...this.reports[idx], interview_date: newDate || null };
+      }
+
+      Utils.notify(newDate ? `面接日を ${newDate} に保存しました` : '面接日をクリアしました', 'success');
+    } catch (err) {
+      Utils.notify('面接日の保存に失敗しました: ' + err.message, 'error');
+    } finally {
+      this._savingInterviewDate[safeId] = false;
+      // セルを再描画
+      const report = this.reports.find(r => r.id === reportId);
+      this._updateInterviewDateCell(safeId, reportId, report?.interview_date || '', false);
+    }
+  },
+
+  // -------------------------------------------------------
+  // 面接日をクリア
+  // -------------------------------------------------------
+  async clearInterviewDate(safeId, reportId) {
+    await this.saveInterviewDate(safeId, reportId, '');
+  },
+
+  // -------------------------------------------------------
+  // 特定行の面接日セルだけ DOM 更新（テーブル全体を再描画しない）
+  // -------------------------------------------------------
+  _updateInterviewDateCell(safeId, reportId, dateVal, isSaving) {
+    // data-safe-id からセルを探す
+    const input = document.querySelector(`.interview-date-input[data-safe-id="${safeId}"]`);
+    const cell = input
+      ? input.closest('td')
+      : document.querySelector(`td[data-interview-td="${safeId}"]`);
+
+    if (!cell) return;
+
+    const html = this._renderInterviewDateCell(safeId, reportId, dateVal || '', isSaving);
+    cell.innerHTML = html;
+
+    // 再バインド（このセルのみ）
+    const newInput = cell.querySelector('.interview-date-input');
+    if (newInput) {
+      newInput.addEventListener('change', (e) => {
+        const sid   = e.target.dataset.safeId;
+        const rid   = parseInt(e.target.dataset.reportId);
+        const d     = e.target.value;
+        this.saveInterviewDate(sid, rid, d);
+      });
+      newInput.addEventListener('focus', (e) => {
+        try { e.target.showPicker && e.target.showPicker(); } catch(_) {}
+      });
+    }
+    const clearBtn = cell.querySelector('[onclick*="clearInterviewDate"]');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        this.clearInterviewDate(safeId, reportId);
+      });
+    }
   },
 
   renderPagination() {

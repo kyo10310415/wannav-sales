@@ -61,6 +61,14 @@ function initializeDatabase() {
     )
   `);
 
+  // interview_date カラムのマイグレーション（既存DBへの追加）
+  const cols = db.pragma('table_info(sales_reports)');
+  const hasInterviewDate = cols.some(c => c.name === 'interview_date');
+  if (!hasInterviewDate) {
+    db.exec(`ALTER TABLE sales_reports ADD COLUMN interview_date TEXT`);
+    console.log('Migration: added interview_date column to sales_reports');
+  }
+
   // Check if admin user exists
   const adminExists = db.prepare("SELECT id FROM users WHERE login_id = 'admin'").get();
   if (!adminExists) {

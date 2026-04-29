@@ -39,6 +39,7 @@ router.post('/', authenticateToken, (req, res) => {
     applicant_first_name,
     applicant_email,
     student_number,
+    interview_date,
     interview_time,
     result,
     contract_plan,
@@ -58,16 +59,16 @@ router.post('/', authenticateToken, (req, res) => {
       INSERT INTO sales_reports (
         interviewer_id, interviewer_name, applicant_full_name,
         applicant_last_name, applicant_first_name, applicant_email,
-        student_number, interview_time, result, contract_plan,
+        student_number, interview_date, interview_time, result, contract_plan,
         payment_method, notion_url, lesson_start_date,
         character_rights, details
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result_db = stmt.run(
       interviewer_id, interviewer_name, applicant_full_name,
       applicant_last_name, applicant_first_name, applicant_email,
-      student_number, interview_time, result, contract_plan,
+      student_number, interview_date || null, interview_time, result, contract_plan,
       payment_method, notion_url, lesson_start_date,
       character_rights, details
     );
@@ -91,7 +92,7 @@ router.put('/:id', authenticateToken, (req, res) => {
   const {
     interviewer_id, interviewer_name, applicant_full_name,
     applicant_last_name, applicant_first_name, applicant_email,
-    student_number, interview_time, result, contract_plan,
+    student_number, interview_date, interview_time, result, contract_plan,
     payment_method, notion_url, lesson_start_date,
     character_rights, details
   } = req.body;
@@ -100,14 +101,14 @@ router.put('/:id', authenticateToken, (req, res) => {
     UPDATE sales_reports SET
       interviewer_id = ?, interviewer_name = ?, applicant_full_name = ?,
       applicant_last_name = ?, applicant_first_name = ?, applicant_email = ?,
-      student_number = ?, interview_time = ?, result = ?, contract_plan = ?,
+      student_number = ?, interview_date = ?, interview_time = ?, result = ?, contract_plan = ?,
       payment_method = ?, notion_url = ?, lesson_start_date = ?,
       character_rights = ?, details = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
     interviewer_id, interviewer_name, applicant_full_name,
     applicant_last_name, applicant_first_name, applicant_email,
-    student_number, interview_time, result, contract_plan,
+    student_number, interview_date || null, interview_time, result, contract_plan,
     payment_method, notion_url, lesson_start_date,
     character_rights, details, id
   );
