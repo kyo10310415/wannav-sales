@@ -40,6 +40,12 @@ const ApplicantsPage = {
           <button class="btn btn-primary btn-sm" onclick="ApplicantsPage.forceRefresh()" title="スプレッドシートを今すぐ再取得">
             <i class="fas fa-cloud-download-alt"></i> 強制更新
           </button>
+          <button class="btn btn-sm" id="calendar-fetch-btn"
+            style="background:#7c3aed;border-color:#7c3aed;color:white;white-space:nowrap"
+            onclick="ApplicantsPage.syncCalendar()"
+            title="Googleカレンダーから面接予約イベントを取得して面接日を自動設定">
+            <i class="fas fa-calendar-alt"></i> カレンダー取得
+          </button>
         </div>
       </div>
       <div class="page-body">
@@ -175,6 +181,56 @@ const ApplicantsPage = {
     await this.loadData(false);
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> 強制更新'; }
     Utils.notify('スプレッドシートを最新データで更新しました', 'success');
+  },
+
+  // ============================================================
+  // Googleカレンダーから面接日を取得・照合して一括保存
+  // ============================================================
+  async syncCalendar() {
+    const btn = document.getElementById('calendar-fetch-btn');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 取得中...';
+    }
+
+    try {
+      const res = await API.calendar.sync();
+      const matched   = (res.results || []).filter(r => r.matched);
+      const unmatched = (res.results || []).filter(r => !r.matched);
+
+      // 面接日ローカルキャッシュを更新
+      matched.forEach(r => {
+        if (r.applicantKey) {
+          this.interviewDates[r.applicantKey] = r.interviewDate || '';
+        }
+      });
+
+      // テーブルを再描画
+      this.renderTable();
+
+      // 結果をトースト通知
+      if (matched.length > 0) {
+        Utils.notify(
+          `カレンダー取得完了：${matched.length}件の面接日を設定しました` +
+          (unmatched.length > 0 ? `（未照合 ${unmatched.length}件）` : ''),
+          'success'
+        );
+      } else if (res.totalEvents === 0) {
+        Utils.notify('「面接予約」イベントが見つかりませんでした（カレンダーIDを確認してください）', 'warning');
+      } else {
+        Utils.notify(
+          `イベント ${res.totalEvents}件を取得しましたが、氏名が一致する応募者が見つかりませんでした`,
+          'warning'
+        );
+      }
+    } catch (err) {
+      Utils.notify('カレンダー取得エラー: ' + err.message, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-calendar-alt"></i> カレンダー取得';
+      }
+    }
   },
 
   renderCacheBadge() {

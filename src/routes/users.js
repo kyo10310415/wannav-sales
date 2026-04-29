@@ -7,7 +7,7 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 // GET /api/users - 全ユーザー取得（管理者のみ）
 router.get('/', authenticateToken, requireAdmin, (req, res) => {
   const users = db.prepare(`
-    SELECT id, login_id, name, role, must_change_password, created_at, updated_at
+    SELECT id, login_id, name, role, calendar_id, must_change_password, created_at, updated_at
     FROM users
     ORDER BY created_at ASC
   `).all();
@@ -24,7 +24,7 @@ router.get('/sales', authenticateToken, (req, res) => {
 
 // POST /api/users - ユーザー作成（管理者のみ）
 router.post('/', authenticateToken, requireAdmin, (req, res) => {
-  const { login_id, name, role } = req.body;
+  const { login_id, name, role, calendar_id } = req.body;
 
   if (!login_id || !name || !role) {
     return res.status(400).json({ error: 'ID、名前、権限は必須です' });
@@ -43,12 +43,12 @@ router.post('/', authenticateToken, requireAdmin, (req, res) => {
 
   try {
     const result = db.prepare(`
-      INSERT INTO users (login_id, name, role, password_hash, must_change_password)
-      VALUES (?, ?, ?, ?, 1)
-    `).run(login_id, name, role, hash);
+      INSERT INTO users (login_id, name, role, password_hash, must_change_password, calendar_id)
+      VALUES (?, ?, ?, ?, 1, ?)
+    `).run(login_id, name, role, hash, calendar_id || null);
 
     const user = db.prepare(`
-      SELECT id, login_id, name, role, must_change_password, created_at FROM users WHERE id = ?
+      SELECT id, login_id, name, role, calendar_id, must_change_password, created_at FROM users WHERE id = ?
     `).get(result.lastInsertRowid);
 
     res.status(201).json(user);
@@ -60,7 +60,7 @@ router.post('/', authenticateToken, requireAdmin, (req, res) => {
 // PUT /api/users/:id - ユーザー更新（管理者のみ）
 router.put('/:id', authenticateToken, requireAdmin, (req, res) => {
   const { id } = req.params;
-  const { name, role, login_id } = req.body;
+  const { name, role, login_id, calendar_id } = req.body;
 
   if (!name || !role || !login_id) {
     return res.status(400).json({ error: 'ID、名前、権限は必須です' });
@@ -82,12 +82,12 @@ router.put('/:id', authenticateToken, requireAdmin, (req, res) => {
   }
 
   db.prepare(`
-    UPDATE users SET login_id = ?, name = ?, role = ?, updated_at = CURRENT_TIMESTAMP
+    UPDATE users SET login_id = ?, name = ?, role = ?, calendar_id = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(login_id, name, role, id);
+  `).run(login_id, name, role, calendar_id || null, id);
 
   const updated = db.prepare(`
-    SELECT id, login_id, name, role, must_change_password, created_at, updated_at FROM users WHERE id = ?
+    SELECT id, login_id, name, role, calendar_id, must_change_password, created_at, updated_at FROM users WHERE id = ?
   `).get(id);
 
   res.json(updated);

@@ -101,6 +101,12 @@ const API = {
     save: (key, date) => API.put(`/interview-dates/${encodeURIComponent(key)}`, { interview_date: date }),
   },
 
+  // Calendar
+  calendar: {
+    sync: () => API.post('/calendar/sync'),
+    events: (calendarId) => API.get(`/calendar/events/${encodeURIComponent(calendarId)}`),
+  },
+
   // Stats
   stats: {
     weekly: () => API.get('/stats/weekly'),
