@@ -72,6 +72,13 @@ function initializeDatabase() {
     )
   `);
 
+  // Migration: users に calendar_id カラムを追加
+  const userCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+  if (!userCols.includes('calendar_id')) {
+    db.exec('ALTER TABLE users ADD COLUMN calendar_id TEXT');
+    console.log('Migration: users.calendar_id column added');
+  }
+
   // Check if admin user exists
   const adminExists = db.prepare("SELECT id FROM users WHERE login_id = 'admin'").get();
   if (!adminExists) {
