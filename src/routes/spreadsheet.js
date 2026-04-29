@@ -154,6 +154,8 @@ async function fetchAndProcessSheet() {
   const COL_FIRST_NAME      = rawHeaders.findIndex(h => h && h.trim() === '名');              // E列
   const COL_EMAIL           = rawHeaders.findIndex(h => h && h.trim() === 'メールアドレス');  // F列
   const COL_FIRST_INTERVIEW = rawHeaders.findIndex(h => h && h.trim() === '一次面接担当');   // L列（重複キー）
+  const COL_DOC_PASS        = rawHeaders.findIndex(h => h && h.trim() === '書類通過');         // N列
+  const COL_INTERVIEW_RESV  = rawHeaders.findIndex(h => h && h.trim() === '面接予約');         // O列
   const COL_INTERVIEW       = rawHeaders.findIndex(h => h && h.trim() === '面接実施');        // R列
   const COL_CV              = rawHeaders.findIndex(h => h && h.trim() === 'CV');               // T列
   const COL_FULL_NAME       = rawHeaders.findIndex(h => h && h.trim() === '氏名（本名）');    // U列
@@ -179,6 +181,10 @@ async function fetchAndProcessSheet() {
     const isCV           = cvValue === 'TRUE';
     const interviewValue = COL_INTERVIEW >= 0      ? (row[COL_INTERVIEW]      || '').trim().toUpperCase() : '';
     const isInterview    = interviewValue === 'TRUE';
+    const docPassValue   = COL_DOC_PASS >= 0       ? (row[COL_DOC_PASS]       || '').trim().toUpperCase() : '';
+    const isDocPass      = docPassValue === 'TRUE';
+    const interviewResvValue = COL_INTERVIEW_RESV >= 0 ? (row[COL_INTERVIEW_RESV] || '').trim().toUpperCase() : '';
+    const isInterviewResv    = interviewResvValue === 'TRUE';
     // 氏名（本名）列を優先、なければ姓+名を結合
     const fullNameCol = COL_FULL_NAME >= 0 ? (row[COL_FULL_NAME] || '').trim() : '';
     const fullName   = fullNameCol || `${lastName}${firstName}`.trim();
@@ -206,8 +212,10 @@ async function fetchAndProcessSheet() {
       email,
       date_str: dateStr,
       date_parsed: parseApplicantDate(dateStr),
-      is_cv: isCV,
+      is_doc_pass: isDocPass,
+      is_interview_resv: isInterviewResv,
       is_interview: isInterview,
+      is_cv: isCV,
       visible_data: visibleData,
       raw: rawHeaders.reduce((acc, h, i) => { acc[h || `col_${i}`] = row[i] || ''; return acc; }, {}),
     });
@@ -345,16 +353,18 @@ router.get('/applicants/count', authenticateToken, async (req, res) => {
 
     const count = filtered.length;
 
-    // 期間内のCV=TRUE件数
-    const cvCount = filtered.filter(a => a.is_cv).length;
-
-    // 期間内の面接実施=TRUE件数
-    const interviewCount = filtered.filter(a => a.is_interview).length;
+    // 期間内の各フラグカウント
+    const docPassCount       = filtered.filter(a => a.is_doc_pass).length;
+    const interviewResvCount = filtered.filter(a => a.is_interview_resv).length;
+    const interviewCount     = filtered.filter(a => a.is_interview).length;
+    const cvCount            = filtered.filter(a => a.is_cv).length;
 
     res.json({
       count,
-      cv_count: cvCount,
+      doc_pass_count: docPassCount,
+      interview_resv_count: interviewResvCount,
       interview_count: interviewCount,
+      cv_count: cvCount,
       period,
       value,
       cached: cache.isValid(),
