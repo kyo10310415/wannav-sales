@@ -242,6 +242,143 @@ router.post('/sync', authenticateToken, async (req, res) => {
 });
 
 // ============================================================
+// GET /api/calendar/debug
+// 診断用: カレンダー取得の全ステップを詳細ログとともに返す
+// ============================================================
+router.get('/debug', authenticateToken, async (req, res) => {
+  const log = [];
+  const result = { steps: log, users: [], events: [], matchResults: [] };
+
+  try {
+    // Step1: GOOGLE_SERVICE_ACCOUNT_JSON の確認
+    const svcJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    if (!svcJson) {
+      log.push({ step: 1, status: 'ERROR', msg: 'GOOGLE_SERVICE_ACCOUNT_JSON が未設定' });
+      return res.json(result);
+    }
+    let credentials;
+    try {
+      credentials = JSON.parse(svcJson);
+      log.push({ step: 1, status: 'OK', msg: `サービスアカウント: ${credentials.client_email}` });
+    } catch (e) {
+      log.push({ step: 1, status: 'ERROR', msg: `JSON parse失敗: ${e.message}` });
+      return res.json(result);
+    }
+
+    // Step2: calendar_id 設定済みユーザーの確認
+    const users = db.prepare(`
+      SELECT id, name, login_id, calendar_id
+      FROM users WHERE calendar_id IS NOT NULL AND calendar_id != ''
+    `).all();
+    result.users = users.map(u => ({ name: u.name, calendar_id: u.calendar_id }));
+    if (users.length === 0) {
+      log.push({ step: 2, status: 'WARN', msg: 'カレンダーIDが設定されているユーザーが0人です' });
+      return res.json(result);
+    }
+    log.push({ step: 2, status: 'OK', msg: `カレンダーID設定済みユーザー: ${users.map(u => u.name).join(', ')}` });
+
+    // Step3: Calendar APIクライアント生成
+    let calendar;
+    try {
+      const auth = new google.auth.GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+      });
+      calendar = google.calendar({ version: 'v3', auth });
+      log.push({ step: 3, status: 'OK', msg: 'Calendar APIクライアント生成成功' });
+    } catch (e) {
+      log.push({ step: 3, status: 'ERROR', msg: `クライアント生成失敗: ${e.message}` });
+      return res.json(result);
+    }
+
+    // Step4: 各ユーザーのカレンダーからイベント取得
+    const timeMin = new Date(); timeMin.setDate(timeMin.getDate() - 90);
+    const timeMax = new Date(); timeMax.setDate(timeMax.getDate() + 180);
+
+    for (const user of users) {
+      try {
+        const resp = await calendar.events.list({
+          calendarId: user.calendar_id,
+          timeMin: timeMin.toISOString(),
+          timeMax: timeMax.toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
+          maxResults: 10,
+        });
+        const items = resp.data.items || [];
+        log.push({
+          step: 4,
+          status: 'OK',
+          msg: `${user.name} (${user.calendar_id}): ${items.length}件取得（クエリなし・先頭10件）`,
+          sampleTitles: items.slice(0, 5).map(ev => ev.summary || '(タイトルなし)'),
+        });
+
+        // 「面接予約」絞り込み
+        const resp2 = await calendar.events.list({
+          calendarId: user.calendar_id,
+          q: '面接予約',
+          timeMin: timeMin.toISOString(),
+          timeMax: timeMax.toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
+          maxResults: 50,
+        });
+        const items2 = (resp2.data.items || []).filter(ev => (ev.summary || '').includes('面接予約'));
+        log.push({
+          step: 4,
+          status: 'OK',
+          msg: `${user.name}: 「面接予約」フィルタ後 ${items2.length}件`,
+          events: items2.map(ev => ({
+            summary: ev.summary,
+            startDt: ev.start?.dateTime || ev.start?.date,
+            extractedName: extractNameFromSummary(ev.summary),
+          })),
+        });
+        result.events.push(...items2.map(ev => ({
+          user: user.name,
+          summary: ev.summary,
+          startDt: ev.start?.dateTime || ev.start?.date,
+          extractedName: extractNameFromSummary(ev.summary),
+        })));
+      } catch (e) {
+        log.push({ step: 4, status: 'ERROR', msg: `${user.name} (${user.calendar_id}): ${e.message}` });
+      }
+    }
+
+    // Step5: 照合対象の応募者リスト
+    const knownApplicants = db.prepare(`
+      SELECT DISTINCT applicant_full_name AS full_name, applicant_email AS email
+      FROM sales_reports
+    `).all();
+    log.push({ step: 5, status: 'OK', msg: `sales_reports から ${knownApplicants.length}人の応募者を取得` });
+
+    // Step6: 氏名照合テスト
+    for (const ev of result.events) {
+      if (!ev.extractedName) {
+        result.matchResults.push({ summary: ev.summary, extractedName: null, matched: false, reason: '氏名抽出失敗' });
+        continue;
+      }
+      const norm = normalizeName(ev.extractedName);
+      const found = knownApplicants.find(ap => ap.full_name && normalizeName(ap.full_name) === norm);
+      result.matchResults.push({
+        summary: ev.summary,
+        extractedName: ev.extractedName,
+        normalizedExtracted: norm,
+        matched: !!found,
+        matchedTo: found ? found.full_name : null,
+        reason: found ? null : `sales_reports に「${ev.extractedName}」が見つからない`,
+      });
+    }
+    log.push({ step: 6, status: 'OK', msg: `照合テスト完了: ${result.matchResults.filter(r => r.matched).length}件マッチ` });
+
+  } catch (err) {
+    log.push({ step: 99, status: 'ERROR', msg: `予期しないエラー: ${err.message}` });
+  }
+
+  res.json(result);
+});
+
+// ============================================================
 // GET /api/calendar/events/:calendarId
 // 特定カレンダーの「面接予約」イベント一覧を返す（プレビュー用）
 // ============================================================
