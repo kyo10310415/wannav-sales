@@ -7,7 +7,8 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 // GET /api/users - 全ユーザー取得（管理者のみ）
 router.get('/', authenticateToken, requireAdmin, (req, res) => {
   const users = db.prepare(`
-    SELECT id, login_id, name, role, calendar_id, must_change_password, created_at, updated_at
+    SELECT id, login_id, name, role, calendar_id, google_email,
+           must_change_password, created_at, updated_at
     FROM users
     ORDER BY created_at ASC
   `).all();
