@@ -95,6 +95,12 @@ const API = {
     cacheClear: () => API.post('/spreadsheet/cache-clear'),
   },
 
+  // Interview Dates
+  interviewDates: {
+    list: () => API.get('/interview-dates'),
+    save: (key, date) => API.put(`/interview-dates/${encodeURIComponent(key)}`, { interview_date: date }),
+  },
+
   // Stats
   stats: {
     weekly: () => API.get('/stats/weekly'),
