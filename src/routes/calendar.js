@@ -32,14 +32,47 @@ function getCalendarClient() {
 }
 
 // ============================================================
-// メモ欄から「ゲスト氏名」を抽出
-// 例: "ゲスト氏名：山田 太郎\n..."  → "山田 太郎"
+// スケジュール名から氏名を抽出
+//
+// 対応パターン例:
+//   🔸大久保弘晃さん: VTuberプロダクション「アススタ」面接予約
+//   ⚠️小笠原圭悟さん: 【明日まで】Vtuberプロダクション「アススタ」面接予約
+//   🔴【一言】井畑匡人さん: VTuberプロダクション「アススタ」面接予約
+//   【学】🔸田辺雅人さん: VTuberプロダクション「アススタ」面接予約
+//
+// ロジック:
+//   1) 先頭の絵文字・【...】タグ・空白を除去
+//   2) 「〇〇さん」の形式で氏名を取り出す（「さん」の直前）
 // ============================================================
-function extractGuestName(description) {
-  if (!description) return null;
-  // 「ゲスト氏名」に続く行を取得（：or: どちらも対応）
-  const match = description.match(/ゲスト氏名[：:]\s*(.+)/);
-  if (match) return match[1].trim();
+function extractNameFromSummary(summary) {
+  if (!summary) return null;
+
+  // Step1: 先頭から「絵文字」「【...】」「空白」を繰り返し除去
+  // 絵文字の範囲: U+1F000–U+1FFFF, U+2600–U+27BF, U+FE00–U+FEFF, etc.
+  let s = summary;
+  // 先頭の【...】ブロック・絵文字・スペースを除去（繰り返し）
+  s = s.replace(/^[\s\u3000　\u200d\ufe0f\u20e3]*/, ''); // 先頭の空白・ZWJ等
+  // 先頭にある「【...】」と絵文字を繰り返し除去
+  // eslint-disable-next-line no-constant-condition
+  let prev = null;
+  while (prev !== s) {
+    prev = s;
+    // 【...】タグを除去
+    s = s.replace(/^【[^】]*】/, '').trim();
+    // 絵文字（サロゲートペアを含む広範な範囲）を除去
+    s = s.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}\u{1F300}-\u{1F9FF}\u{2702}-\u{27B0}\u{24C2}-\u{1F251}\u{1F004}\u{1F0CF}⚠️🔸🔴⭕❌✅🟥🟡🟢🔵🟠]+/u, '').trim();
+    // 顔文字・記号類
+    s = s.replace(/^[★☆◆◇▶▷►▸●○■□♦♠♣♥♤♡♢♧✦✧※→←↑↓]+/, '').trim();
+  }
+
+  // Step2: 「〇〇さん」を探して名前部分を返す
+  // 「さん」の直前にある連続した日本語文字列（氏名）を取得
+  // 氏名は漢字・ひらがな・カタカナ・スペース（姓名間のスペース含む）
+  const match = s.match(/^([^\s:：【\n]+?)\s*さん/);
+  if (match) {
+    return match[1].trim();
+  }
+
   return null;
 }
 
@@ -96,7 +129,7 @@ router.post('/sync', authenticateToken, async (req, res) => {
             // タイトルに「面接予約」を含むもののみ
             if (!(ev.summary || '').includes('面接予約')) continue;
 
-            const guestName = extractGuestName(ev.description);
+            const guestName = extractNameFromSummary(ev.summary);
             const startDt = ev.start?.dateTime || ev.start?.date;
 
             allEvents.push({
@@ -107,7 +140,6 @@ router.post('/sync', authenticateToken, async (req, res) => {
               summary: ev.summary,
               startDt,
               guestName,
-              description: ev.description || '',
             });
           }
           pageToken = resp.data.nextPageToken;
@@ -239,8 +271,7 @@ router.get('/events/:calendarId', authenticateToken, async (req, res) => {
         id: ev.id,
         summary: ev.summary,
         startDt: ev.start?.dateTime || ev.start?.date,
-        guestName: extractGuestName(ev.description),
-        description: ev.description || '',
+        guestName: extractNameFromSummary(ev.summary),
       }));
 
     res.json({ ok: true, events });
