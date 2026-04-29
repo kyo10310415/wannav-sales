@@ -103,8 +103,10 @@ const API = {
 
   // Calendar
   calendar: {
-    sync: () => API.post('/calendar/sync'),
-    events: (calendarId) => API.get(`/calendar/events/${encodeURIComponent(calendarId)}`),
+    sync:       () => API.post('/calendar/sync'),
+    status:     () => API.get('/calendar/status'),
+    authUrl:    () => API.get('/calendar/auth-url'),
+    revokeToken:() => API.delete('/calendar/token'),
   },
 
   // Stats

@@ -72,11 +72,19 @@ function initializeDatabase() {
     )
   `);
 
-  // Migration: users に calendar_id カラムを追加
+  // Migration: users に各カラムを追加
   const userCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
   if (!userCols.includes('calendar_id')) {
     db.exec('ALTER TABLE users ADD COLUMN calendar_id TEXT');
     console.log('Migration: users.calendar_id column added');
+  }
+  if (!userCols.includes('google_refresh_token')) {
+    db.exec('ALTER TABLE users ADD COLUMN google_refresh_token TEXT');
+    console.log('Migration: users.google_refresh_token column added');
+  }
+  if (!userCols.includes('google_email')) {
+    db.exec('ALTER TABLE users ADD COLUMN google_email TEXT');
+    console.log('Migration: users.google_email column added');
   }
 
   // Check if admin user exists
