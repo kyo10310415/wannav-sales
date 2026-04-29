@@ -135,6 +135,9 @@ const App = {
             <button class="btn btn-secondary btn-sm" style="width:100%;justify-content:center;margin-bottom:6px;font-size:11px" onclick="App.showChangePassword(false)">
               <i class="fas fa-key"></i> パスワード変更
             </button>
+            <button id="sidebar-google-btn" class="btn btn-sm" style="width:100%;justify-content:center;margin-bottom:6px;font-size:11px;background:#4285f4;border-color:#4285f4;color:white">
+              <i class="fab fa-google"></i> <span id="sidebar-google-label">Google連携を確認中...</span>
+            </button>
             <button class="btn-logout" id="logout-btn">
               <i class="fas fa-sign-out-alt"></i> ログアウト
             </button>
@@ -156,6 +159,89 @@ const App = {
           this.showLogin();
         }
       });
+    }
+
+    // Google連携ボタン: 状態を取得してラベルと動作を切り替え
+    this._mountGoogleBtn();
+  },
+
+  async _mountGoogleBtn() {
+    const btn   = document.getElementById('sidebar-google-btn');
+    const label = document.getElementById('sidebar-google-label');
+    if (!btn || !label) return;
+
+    try {
+      const status = await API.calendar.status();
+      if (status.linked) {
+        // 連携済み: メールを短縮表示・クリックで解除
+        const shortEmail = status.email
+          ? (status.email.length > 18 ? status.email.substring(0, 16) + '…' : status.email)
+          : '連携済み';
+        label.textContent = shortEmail;
+        btn.title = `連携済み: ${status.email}\nクリックで解除`;
+        btn.style.background     = '#166534';
+        btn.style.borderColor    = '#166534';
+        btn.onclick = async () => {
+          if (!confirm(`Googleアカウント（${status.email}）の連携を解除しますか？`)) return;
+          try {
+            await API.calendar.revokeToken();
+            Utils.notify('Google連携を解除しました', 'success');
+            this._mountGoogleBtn(); // ボタンを再描画
+          } catch (e) {
+            Utils.notify('解除に失敗しました: ' + e.message, 'error');
+          }
+        };
+      } else {
+        // 未連携: クリックでOAuthポップアップ
+        label.textContent = 'Google連携する';
+        btn.title = 'Googleカレンダーと連携する';
+        btn.style.background  = '#4285f4';
+        btn.style.borderColor = '#4285f4';
+        btn.onclick = () => this._openGoogleAuth();
+      }
+    } catch (_) {
+      label.textContent = 'Google連携する';
+      btn.onclick = () => this._openGoogleAuth();
+    }
+  },
+
+  async _openGoogleAuth() {
+    const btn   = document.getElementById('sidebar-google-btn');
+    const label = document.getElementById('sidebar-google-label');
+    if (btn) { btn.disabled = true; }
+    if (label) { label.textContent = '処理中...'; }
+
+    try {
+      const { url } = await API.calendar.authUrl();
+      const popup = window.open(url, 'google_auth',
+        'width=600,height=700,scrollbars=yes,resizable=yes');
+
+      const handler = async (event) => {
+        if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
+          window.removeEventListener('message', handler);
+          Utils.notify(`Google連携しました（${event.data.email}）`, 'success');
+          this._mountGoogleBtn();
+        } else if (event.data?.type === 'GOOGLE_AUTH_ERROR') {
+          window.removeEventListener('message', handler);
+          Utils.notify('連携に失敗しました: ' + event.data.error, 'error');
+          this._mountGoogleBtn();
+        }
+      };
+      window.addEventListener('message', handler);
+
+      const timer = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(timer);
+          window.removeEventListener('message', handler);
+          this._mountGoogleBtn();
+        }
+      }, 1000);
+
+    } catch (err) {
+      Utils.notify('認証URLの取得に失敗しました: ' + err.message, 'error');
+      this._mountGoogleBtn();
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 };
