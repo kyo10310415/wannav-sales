@@ -87,6 +87,35 @@ function initializeDatabase() {
     console.log('Migration: users.google_email column added');
   }
 
+  // すくう君ソース管理テーブル
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sukuukun_sources (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'text',
+      file_name TEXT,
+      char_count INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // すくう君採点履歴テーブル
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sukuukun_evaluations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      applicant_name TEXT,
+      evaluator_id INTEGER,
+      evaluator_name TEXT,
+      transcript_length INTEGER,
+      total_score INTEGER,
+      result_json TEXT,
+      source_snapshot TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Check if admin user exists
   const adminExists = db.prepare("SELECT id FROM users WHERE login_id = 'admin'").get();
   if (!adminExists) {

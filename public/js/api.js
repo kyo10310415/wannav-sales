@@ -109,6 +109,37 @@ const API = {
     revokeToken:() => API.delete('/calendar/token'),
   },
 
+  // すくう君
+  sukuukun: {
+    sources: {
+      list:      ()         => API.get('/sukuukun/sources'),
+      get:       (id)       => API.get(`/sukuukun/sources/${id}`),
+      addText:   (data)     => API.post('/sukuukun/sources/text', data),
+      update:    (id, data) => API.put(`/sukuukun/sources/${id}`, data),
+      delete:    (id)       => API.delete(`/sukuukun/sources/${id}`),
+      uploadPdf: (file, title) => {
+        const token = API.getToken();
+        const form = new FormData();
+        form.append('pdf', file);
+        if (title) form.append('title', title);
+        return fetch('/api/sukuukun/sources/pdf', {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: form,
+        }).then(async r => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+          return j;
+        });
+      },
+    },
+    evaluate: (data)  => API.post('/sukuukun/evaluate', data),
+    history: {
+      list:  ()   => API.get('/sukuukun/history'),
+      get:   (id) => API.get(`/sukuukun/history/${id}`),
+    },
+  },
+
   // Stats
   stats: {
     weekly: () => API.get('/stats/weekly'),
