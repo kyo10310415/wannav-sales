@@ -23,6 +23,7 @@ app.use('/api/spreadsheet', require('./src/routes/spreadsheet'));
 app.use('/api/stats', require('./src/routes/stats'));
 app.use('/api/interview-dates', require('./src/routes/interviewDates'));
 app.use('/api/calendar', require('./src/routes/calendar'));
+app.use('/api/sukuukun', require('./src/routes/sukuukun'));
 
 // Health check
 app.get('/api/health', (req, res) => {
