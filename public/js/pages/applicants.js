@@ -482,21 +482,29 @@ const ApplicantsPage = {
         return `<td style="${cellStyle}" title="${Utils.escHtml(col.value)}">${Utils.escHtml(val)}</td>`;
       });
 
-      const reportCell = report
-        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
-            ${isContract
-              ? '<span style="font-size:9px;background:#dcfce7;color:#16a34a;border-radius:4px;padding:1px 5px;font-weight:700"><i class="fas fa-check"></i> 契約</span>'
-              : `<span style="font-size:9px;background:#f3f4f6;color:#374151;border-radius:4px;padding:1px 5px">${Utils.escHtml(report.result || '報告あり')}</span>`
-            }
-            <button class="btn btn-secondary btn-xs" style="font-size:10px;padding:2px 6px"
-              onclick="ApplicantsPage.editReport('${safeId}',${report.id})">
-              <i class="fas fa-edit"></i>
-            </button>
-          </div>`
-        : `<button class="btn btn-primary btn-xs" style="font-size:10px;padding:3px 6px"
-            onclick="ApplicantsPage.openSalesReport('${safeId}')">
-            <i class="fas fa-plus"></i> 報告
-          </button>`;
+      const reportCell = `<div style="display:flex;flex-direction:column;align-items:center;gap:3px">
+          ${report
+            ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+                ${isContract
+                  ? '<span style="font-size:9px;background:#dcfce7;color:#16a34a;border-radius:4px;padding:1px 5px;font-weight:700"><i class="fas fa-check"></i> 契約</span>'
+                  : `<span style="font-size:9px;background:#f3f4f6;color:#374151;border-radius:4px;padding:1px 5px">${Utils.escHtml(report.result || '報告あり')}</span>`
+                }
+                <button class="btn btn-secondary btn-xs" style="font-size:10px;padding:2px 6px"
+                  onclick="ApplicantsPage.editReport('${safeId}',${report.id})">
+                  <i class="fas fa-edit"></i>
+                </button>
+              </div>`
+            : `<button class="btn btn-primary btn-xs" style="font-size:10px;padding:3px 6px"
+                onclick="ApplicantsPage.openSalesReport('${safeId}')">
+                <i class="fas fa-plus"></i> 報告
+              </button>`
+          }
+          <button class="btn btn-xs" title="すくう君で採点"
+            style="font-size:10px;padding:2px 5px;background:#fef3c7;border:1px solid #f59e0b;color:#92400e;border-radius:4px;white-space:nowrap;cursor:pointer"
+            onclick="SukuukunModal.open(ApplicantsPage._cache?.['${safeId}'])">
+            🤖 すくう君
+          </button>
+        </div>`;
 
       // 面接日セル: 常に入力可能
       const interviewDateCell = isSaving
