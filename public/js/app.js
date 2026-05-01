@@ -143,6 +143,12 @@ const App = {
               <i class="fas fa-book-open" style="color:#f59e0b"></i>
               <span>すくう君</span>
             </a>
+            <div class="nav-item" id="nav-sukuukun-test"
+              onclick="SukuukunModal.open(null)"
+              style="background:#fffbeb;color:#92400e;border-left:3px solid #f59e0b;cursor:pointer">
+              <i class="fas fa-robot" style="color:#f59e0b"></i>
+              <span>すくう君テスト</span>
+            </div>
           </div>
           <div class="sidebar-footer">
             <div class="user-info">
