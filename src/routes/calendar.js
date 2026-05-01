@@ -84,7 +84,11 @@ router.get('/auth-url', authenticateToken, (req, res) => {
     const url = oauth2.generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',         // 毎回リフレッシュトークンを取得
-      scope: ['https://www.googleapis.com/auth/calendar.readonly'],
+      scope: [
+        'https://www.googleapis.com/auth/calendar.readonly',
+        'https://www.googleapis.com/auth/userinfo.email',
+        'https://www.googleapis.com/auth/userinfo.profile',
+      ],
       state: String(req.user.id), // コールバックでユーザーIDを特定
     });
     res.json({ ok: true, url });
