@@ -14,6 +14,7 @@ const ApplicantsPage = {
   filterResult: '',
   filterDateFrom: '',
   filterDateTo: '',
+  filterNoInterviewDate: false,
   sortCol: null,
   sortDir: 'desc',
 
@@ -76,6 +77,13 @@ const ApplicantsPage = {
                   <option value="reported">報告あり</option>
                   <option value="unreported">未報告</option>
                 </select>
+              </div>
+              <div>
+                <button class="btn btn-sm" id="filter-no-date-btn"
+                  onclick="ApplicantsPage.toggleNoDateFilter()"
+                  style="margin-top:auto;background:#f59e0b;border-color:#f59e0b;color:white;white-space:nowrap">
+                  <i class="fas fa-calendar-times"></i> 面接日未入力のみ
+                </button>
               </div>
               <div>
                 <button class="btn btn-secondary btn-sm" onclick="ApplicantsPage.resetFilters()" style="margin-top:auto">
@@ -256,11 +264,31 @@ const ApplicantsPage = {
     } catch (e) {}
   },
 
+  toggleNoDateFilter() {
+    this.filterNoInterviewDate = !this.filterNoInterviewDate;
+    this.currentPage = 1;
+    // ボタンの見た目をトグル
+    const btn = document.getElementById('filter-no-date-btn');
+    if (btn) {
+      if (this.filterNoInterviewDate) {
+        btn.style.background = '#d97706';
+        btn.style.borderColor = '#d97706';
+        btn.style.boxShadow = '0 0 0 3px rgba(245,158,11,0.35)';
+      } else {
+        btn.style.background = '#f59e0b';
+        btn.style.borderColor = '#f59e0b';
+        btn.style.boxShadow = '';
+      }
+    }
+    this.filterAndRender();
+  },
+
   resetFilters() {
     this.searchQuery = '';
     this.filterDateFrom = '';
     this.filterDateTo = '';
     this.filterResult = '';
+    this.filterNoInterviewDate = false;
     this.sortCol = null;
     this.sortDir = 'desc';
     this.currentPage = 1;
@@ -272,6 +300,12 @@ const ApplicantsPage = {
     if (dt) dt.value = '';
     const fr = document.getElementById('filter-result');
     if (fr) fr.value = '';
+    const btn = document.getElementById('filter-no-date-btn');
+    if (btn) {
+      btn.style.background = '#f59e0b';
+      btn.style.borderColor = '#f59e0b';
+      btn.style.boxShadow = '';
+    }
     this.filterAndRender();
   },
 
@@ -310,6 +344,14 @@ const ApplicantsPage = {
         if (this.filterResult === 'reported')   return !!report;
         if (this.filterResult === 'unreported') return !report;
         return true;
+      });
+    }
+
+    if (this.filterNoInterviewDate) {
+      list = list.filter(a => {
+        const key = this._applicantKey(a);
+        const dateVal = this.interviewDates[key];
+        return !dateVal || dateVal.trim() === '';
       });
     }
 
