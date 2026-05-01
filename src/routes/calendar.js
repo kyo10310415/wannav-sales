@@ -55,23 +55,49 @@ function normalizeName(name) {
 //   ⚠️小笠原圭悟さん: 【明日まで】...面接予約
 //   🔴【一言】井畑匡人さん: ...面接予約
 //   【学】🔸田辺雅人さん: ...面接予約
+//   八尋 伊央利さん（スペース区切りの姓名）
+//   社団医療法人 啓愛会 孝仁病院 黒木 瞳花さん（法人名混入）
 // ============================================================
 function extractNameFromSummary(summary) {
   if (!summary) return null;
 
-  let s = summary.replace(/^[\s\u3000　\u200d\ufe0f\u20e3]*/, '');
+  // ① コロン（:または：）より前だけを対象（会社名・会場名を除外）
+  const beforeColon = summary.split(/[:：]/)[0];
+  let s = beforeColon.trim();
 
+  // ② 先頭の【...】タグ・絵文字・記号を繰り返し除去
+  //    ※ \u{24C2}-\u{1F251} のような広範囲は漢字・ひらがなも含むため使用不可
   let prev = null;
   while (prev !== s) {
     prev = s;
-    s = s.replace(/^【[^】]*】/, '').trim();
-    s = s.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}\u{1F300}-\u{1F9FF}\u{2702}-\u{27B0}\u{24C2}-\u{1F251}\u{1F004}\u{1F0CF}⚠️🔸🔴⭕❌✅🟥🟡🟢🔵🟠]+/u, '').trim();
-    s = s.replace(/^[★☆◆◇▶▷►▸●○■□♦♠♣♥♤♡♢♧✦✧※→←↑↓]+/, '').trim();
+    // 【...】タグ（時刻表記を含む）
+    s = s.replace(/^【[^】]*】\s*/, '');
+    // サロゲートペア絵文字（U+1F000〜U+1FFFF）― 漢字を含まない安全な範囲
+    s = s.replace(/^[\u{1F000}-\u{1FFFF}]+/gu, '');
+    // 一般記号・装飾記号（U+2600〜U+27BF）― 日本語文字を含まない安全な範囲
+    s = s.replace(/^[\u2600-\u26FF\u2700-\u27BF]+/, '');
+    // よく使われる絵文字・記号の直接指定
+    s = s.replace(/^[⚠️🔸🔴⭕❌✅🟥🟡🟢🔵🟠🔶🔷🔹🔺🔻★☆◆◇▶▷►▸●○■□♦♠♣♥♤♡♢♧✦✧※→←↑↓]+/u, '');
+    // 異体字セレクタ（U+FE00〜U+FE0F のみ）
+    s = s.replace(/^[\uFE00-\uFE0F]+/, '');
+    s = s.trim();
   }
 
-  const match = s.match(/^([^\s:：【\n]+?)\s*さん/);
-  if (match) return match[1].trim();
-  return null;
+  // ③ 「さん」の直前までを名前として取得
+  //    姓名間のスペース（半角・全角）も名前の一部として許容する
+  const sanMatch = s.match(/^(.+?)さん/);
+  if (!sanMatch) return null;
+
+  let name = sanMatch[1].trim();
+
+  // ④ 法人名が混入している場合（スペース区切りで3語以上）は末尾2語だけ使う
+  //    例: "社団医療法人 啓愛会 孝仁病院 黒木 瞳花" → "黒木 瞳花"
+  const parts = name.split(/[\s\u3000]+/).filter(Boolean);
+  if (parts.length >= 3) {
+    name = parts.slice(-2).join(' ');
+  }
+
+  return name || null;
 }
 
 // ============================================================
