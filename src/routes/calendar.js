@@ -49,7 +49,22 @@ function normalizeName(name) {
 }
 
 // ============================================================
-// スケジュール名から氏名を抽出
+// メモ欄（description）から「ゲスト氏名」を抽出
+// 例:
+//   「ゲスト氏名 : 阿野 楽土」
+//   「ゲスト氏名: 山田太郎」
+// ============================================================
+function extractNameFromDescription(description) {
+  if (!description) return null;
+  // 「ゲスト氏名 :」または「ゲスト氏名:」の後ろの値を取得
+  const m = description.match(/ゲスト氏名\s*[：::]\s*([^\n\r]+)/);
+  if (!m) return null;
+  const name = m[1].trim();
+  return name || null;
+}
+
+// ============================================================
+// スケジュールタイトルから氏名を抽出（descriptionで取れない場合のフォールバック）
 // 例:
 //   🔸大久保弘晃さん: VTuberプロダクション「アススタ」面接予約
 //   ⚠️小笠原圭悟さん: 【明日まで】...面接予約
@@ -57,28 +72,35 @@ function normalizeName(name) {
 //   【学】🔸田辺雅人さん: ...面接予約
 //   八尋 伊央利さん（スペース区切りの姓名）
 //   社団医療法人 啓愛会 孝仁病院 黒木 瞳花さん（法人名混入）
+//   （転職案内成功した方）🔸藤本樹さん: ...（全角カッコ前置き）
+//   ⭐️荷宮礁さん: ...（⭐️ = U+2B50 + U+FE0F バリアント）
 // ============================================================
 function extractNameFromSummary(summary) {
   if (!summary) return null;
 
-  // ① コロン（:または：）より前だけを対象（会社名・会場名を除外）
-  const beforeColon = summary.split(/[:：]/)[0];
+  // ① 「さんの後ろのコロン」より前だけを対象（会社名・会場名を除外）
+  //    ※ 単純な split(/[:：]/) は【18:00まで】内のコロンでも誤分割するため使用不可
+  //    「さん:」「さん：」が現れる位置でカットし、なければ全体を対象にする
+  const sanColonIdx = summary.search(/さん\s*[:：]/);
+  const beforeColon = sanColonIdx >= 0 ? summary.slice(0, sanColonIdx + 3) : summary;
   let s = beforeColon.trim();
 
-  // ② 先頭の【...】タグ・絵文字・記号を繰り返し除去
+  // ② 先頭の【...】・（...）タグ・絵文字・記号を繰り返し除去
   //    ※ \u{24C2}-\u{1F251} のような広範囲は漢字・ひらがなも含むため使用不可
   let prev = null;
   while (prev !== s) {
     prev = s;
-    // 【...】タグ（時刻表記を含む）
+    // 【...】タグ（時刻・メモ付き）
     s = s.replace(/^【[^】]*】\s*/, '');
+    // （...）全角丸括弧タグ
+    s = s.replace(/^（[^）]*）\s*/, '');
     // サロゲートペア絵文字（U+1F000〜U+1FFFF）― 漢字を含まない安全な範囲
     s = s.replace(/^[\u{1F000}-\u{1FFFF}]+/gu, '');
     // 一般記号・装飾記号（U+2600〜U+27BF）― 日本語文字を含まない安全な範囲
     s = s.replace(/^[\u2600-\u26FF\u2700-\u27BF]+/, '');
-    // よく使われる絵文字・記号の直接指定
-    s = s.replace(/^[⚠️🔸🔴⭕❌✅🟥🟡🟢🔵🟠🔶🔷🔹🔺🔻★☆◆◇▶▷►▸●○■□♦♠♣♥♤♡♢♧✦✧※→←↑↓]+/u, '');
-    // 異体字セレクタ（U+FE00〜U+FE0F のみ）
+    // よく使われる絵文字・記号の直接指定（⭐ U+2B50 も追加）
+    s = s.replace(/^[⚠️🔸🔴⭕❌✅🟥🟡🟢🔵🟠🔶🔷🔹🔺🔻⭐★☆◆◇▶▷►▸●○■□♦♠♣♥♤♡♢♧✦✧※→←↑↓]+/u, '');
+    // 異体字セレクタ・バリアント（U+FE00〜U+FE0F）
     s = s.replace(/^[\uFE00-\uFE0F]+/, '');
     s = s.trim();
   }
@@ -92,12 +114,26 @@ function extractNameFromSummary(summary) {
 
   // ④ 法人名が混入している場合（スペース区切りで3語以上）は末尾2語だけ使う
   //    例: "社団医療法人 啓愛会 孝仁病院 黒木 瞳花" → "黒木 瞳花"
+  //    ※ ただし外国人名（小川 ラファエル タカシ等）は末尾1語だけ使う
   const parts = name.split(/[\s\u3000]+/).filter(Boolean);
   if (parts.length >= 3) {
+    // 末尾2語が片方カタカナ・片方漢字なら外国人名として末尾2語を採用
+    // それ以外（全員漢字等）も末尾2語を採用（法人名ケース）
     name = parts.slice(-2).join(' ');
   }
 
   return name || null;
+}
+
+// ============================================================
+// イベントから氏名を取得（description優先、なければsummaryから抽出）
+// ============================================================
+function extractGuestName(summary, description) {
+  // メモ欄の「ゲスト氏名」が最も確実
+  const fromDesc = extractNameFromDescription(description);
+  if (fromDesc) return fromDesc;
+  // フォールバック: タイトルから抽出
+  return extractNameFromSummary(summary);
 }
 
 // ============================================================
@@ -269,12 +305,14 @@ router.post('/sync', authenticateToken, async (req, res) => {
           for (const ev of (resp.data.items || [])) {
             if (!(ev.summary || '').includes('面接予約')) continue;
             allEvents.push({
-              userId:    user.id,
-              userName:  user.name,
-              eventId:   ev.id,
-              summary:   ev.summary,
-              startDt:   ev.start?.dateTime || ev.start?.date,
-              guestName: extractNameFromSummary(ev.summary),
+              userId:      user.id,
+              userName:    user.name,
+              eventId:     ev.id,
+              summary:     ev.summary,
+              description: ev.description || '',
+              startDt:     ev.start?.dateTime || ev.start?.date,
+              guestName:   extractGuestName(ev.summary, ev.description),
+              nameSource:  extractNameFromDescription(ev.description) ? 'description' : 'summary',
             });
           }
           pageToken = resp.data.nextPageToken;
@@ -415,11 +453,36 @@ router.get('/debug', authenticateToken, async (req, res) => {
           step: `filter_${u.name}`, status: 'OK',
           count: items2.length,
           events: items2.map(ev => ({
-            summary: ev.summary,
-            startDt: ev.start?.dateTime || ev.start?.date,
-            extracted: extractNameFromSummary(ev.summary),
+            summary:     ev.summary,
+            startDt:     ev.start?.dateTime || ev.start?.date,
+            fromDesc:    extractNameFromDescription(ev.description),
+            fromSummary: extractNameFromSummary(ev.summary),
+            extracted:   extractGuestName(ev.summary, ev.description),
+            nameSource:  extractNameFromDescription(ev.description) ? 'description' : 'summary',
+            descSnippet: (ev.description || '').slice(0, 200),
           })),
         });
+
+        // 照合状況もデバッグ出力
+        const knownApplicants = db.prepare(
+          'SELECT DISTINCT applicant_full_name AS full_name, applicant_email AS email FROM sales_reports'
+        ).all();
+        const matchDebug = items2.slice(0, 5).map(ev => {
+          const guestName = extractGuestName(ev.summary, ev.description);
+          const normGuest = normalizeName(guestName || '');
+          const hit = knownApplicants.find(ap => ap.full_name && normalizeName(ap.full_name) === normGuest);
+          return {
+            guestName,
+            normGuest,
+            matched: !!hit,
+            matchedKey: hit ? (hit.email || hit.full_name) : null,
+            sampleKnown: knownApplicants.slice(0, 3).map(ap => ({
+              full_name: ap.full_name,
+              norm: normalizeName(ap.full_name),
+            })),
+          };
+        });
+        log.push({ step: `match_debug_${u.name}`, matchDebug, totalKnown: knownApplicants.length });
       } catch (e) {
         log.push({ step: `fetch_${u.name}`, status: 'ERROR', msg: e.message });
       }
