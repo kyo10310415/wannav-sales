@@ -3,6 +3,7 @@ const router = express.Router();
 const { google } = require('googleapis');
 const db = require('../database');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const spreadsheetCache = require('./spreadsheet').cache;
 
 // ============================================================
 // OAuth2クライアント生成
@@ -61,6 +62,19 @@ function extractNameFromDescription(description) {
   if (!m) return null;
   const name = m[1].trim();
   return name || null;
+}
+
+// ============================================================
+// メモ欄（description）から「ゲストメールアドレス」を抽出
+// 例:
+//   「ゲストメールアドレス : keiji.sg.fps0530@gmail.com」
+// ============================================================
+function extractEmailFromDescription(description) {
+  if (!description) return null;
+  const m = description.match(/ゲストメールアドレス\s*[：::]\s*([^\n\r\s]+)/);
+  if (!m) return null;
+  const email = m[1].trim();
+  return email || null;
 }
 
 // ============================================================
@@ -323,12 +337,22 @@ router.post('/sync', authenticateToken, async (req, res) => {
       }
     }
 
-    // 照合用データ: sales_reports + applicant_interview_dates
-    const knownApplicants = db.prepare(`
-      SELECT DISTINCT applicant_full_name AS full_name, applicant_email AS email
-      FROM sales_reports
-    `).all();
+    // ============================================================
+    // 照合用データ: スプレッドシートキャッシュ（優先）
+    // スプレッドシートに5000件超の応募者データが存在するため
+    // sales_reports（営業報告未入力の場合0件）ではなくキャッシュを使う
+    // ============================================================
+    const sheetApplicants = (spreadsheetCache && spreadsheetCache.data)
+      ? spreadsheetCache.data.applicants
+      : [];
 
+    // メール→キーのマップ（高速照合用）
+    const emailToKey = new Map();
+    for (const ap of sheetApplicants) {
+      if (ap.email) emailToKey.set(ap.email.toLowerCase().trim(), ap.email.trim());
+    }
+
+    // 既存の面接日レコードキー一覧
     const allDateKeys = db.prepare(
       'SELECT applicant_key FROM applicant_interview_dates'
     ).all().map(r => r.applicant_key);
@@ -344,32 +368,61 @@ router.post('/sync', authenticateToken, async (req, res) => {
     const matchResults = [];
 
     for (const ev of allEvents) {
-      if (!ev.guestName || !ev.startDt) continue;
+      if (!ev.startDt) continue;
+      const guestName  = ev.guestName;
+      const guestEmail = extractEmailFromDescription(ev.description);
 
-      const normGuest = normalizeName(ev.guestName);
       let matched = null;
+      let matchMethod = null;
 
-      for (const ap of knownApplicants) {
-        if (ap.full_name && normalizeName(ap.full_name) === normGuest) {
-          matched = { key: ap.email?.trim() || ap.full_name };
-          break;
+      // ① メールアドレスで照合（最優先・最確実）
+      if (guestEmail) {
+        const key = emailToKey.get(guestEmail.toLowerCase().trim());
+        if (key) { matched = { key }; matchMethod = 'email'; }
+      }
+
+      // ② 氏名で照合（スプレッドシートキャッシュ）
+      if (!matched && guestName) {
+        const normGuest = normalizeName(guestName);
+        for (const ap of sheetApplicants) {
+          if (ap.full_name && normalizeName(ap.full_name) === normGuest) {
+            matched = { key: ap.email?.trim() || ap.full_name };
+            matchMethod = 'name_sheet';
+            break;
+          }
         }
       }
-      if (!matched) {
+
+      // ③ 既存 applicant_interview_dates キーで照合
+      if (!matched && guestName) {
+        const normGuest = normalizeName(guestName);
         for (const key of allDateKeys) {
-          if (normalizeName(key) === normGuest) { matched = { key }; break; }
+          if (normalizeName(key) === normGuest) {
+            matched = { key };
+            matchMethod = 'name_existing';
+            break;
+          }
         }
       }
 
       if (!matched) {
-        matchResults.push({ guestName: ev.guestName, startDt: ev.startDt, matched: false });
+        matchResults.push({
+          guestName: guestName || '(氏名なし)',
+          guestEmail,
+          startDt: ev.startDt,
+          matched: false,
+        });
         continue;
       }
 
       upsert.run(matched.key, ev.startDt.substring(0, 10));
       matchResults.push({
-        guestName: ev.guestName, applicantKey: matched.key,
-        startDt: ev.startDt, interviewDate: ev.startDt.substring(0, 10), matched: true,
+        guestName, guestEmail,
+        applicantKey: matched.key,
+        matchMethod,
+        startDt: ev.startDt,
+        interviewDate: ev.startDt.substring(0, 10),
+        matched: true,
       });
     }
 
