@@ -22,6 +22,12 @@ const App = {
       title: 'データ集計',
       adminOnly: false,
     },
+    sukuukun: {
+      nav: 'nav-sukuukun',
+      module: () => SukuukunPage,
+      title: 'すくう君',
+      adminOnly: false,
+    },
     users: {
       nav: 'nav-users',
       module: () => UsersPage,
@@ -114,6 +120,14 @@ const App = {
         show: true,
       },
       {
+        id: 'nav-sukuukun',
+        page: 'sukuukun',
+        icon: 'fa-robot',
+        label: 'すくう君',
+        show: true,
+        style: 'background:#fffbeb;color:#92400e;border-left:3px solid #f59e0b',
+      },
+      {
         id: 'nav-users',
         page: 'users',
         icon: 'fa-user-cog',
@@ -130,25 +144,19 @@ const App = {
             <span>営業管理システム</span>
           </div>
           <div class="sidebar-nav">
-            ${navItems.filter(n => n.show).map(n => `
-              <div class="nav-item ${this.currentPage === n.page ? 'active' : ''}" id="${n.id}" onclick="App.navigate('${n.page}')">
-                <i class="fas ${n.icon}"></i>
+            ${navItems.filter(n => n.show).map(n => {
+              const isActive = this.currentPage === n.page;
+              const customStyle = n.style
+                ? (isActive ? n.style + ';opacity:1;font-weight:700' : n.style)
+                : '';
+              return `
+              <div class="nav-item ${isActive ? 'active' : ''}" id="${n.id}"
+                onclick="App.navigate('${n.page}')"
+                ${customStyle ? `style="${customStyle}"` : ''}>
+                <i class="fas ${n.icon}"${n.style ? ` style="color:#f59e0b"` : ''}></i>
                 <span>${n.label}</span>
-              </div>
-            `).join('')}
-            <a href="https://notebooklm.google.com/notebook/d3d56d61-e84f-49a5-ae12-6b22111479a8"
-              target="_blank" rel="noopener noreferrer"
-              class="nav-item"
-              style="margin-top:8px;background:#fef3c7;color:#92400e;text-decoration:none;border-left:3px solid #f59e0b">
-              <i class="fas fa-book-open" style="color:#f59e0b"></i>
-              <span>すくう君</span>
-            </a>
-            <div class="nav-item" id="nav-sukuukun-test"
-              onclick="SukuukunModal.open(null)"
-              style="background:#fffbeb;color:#92400e;border-left:3px solid #f59e0b;cursor:pointer">
-              <i class="fas fa-robot" style="color:#f59e0b"></i>
-              <span>すくう君テスト</span>
-            </div>
+              </div>`;
+            }).join('')}
           </div>
           <div class="sidebar-footer">
             <div class="user-info">
