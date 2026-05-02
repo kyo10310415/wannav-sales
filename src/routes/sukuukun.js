@@ -22,7 +22,7 @@ const upload = multer({
 // ============================================================
 function callGemini(systemPrompt, userMessage, apiKey) {
   return new Promise((resolve, reject) => {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-preview:generateContent?key=${apiKey}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     const url = new URL(endpoint);
 
     const payload = {
