@@ -6,6 +6,8 @@ const SukuukunPage = {
   activeTab: 'evaluate',
   editingSourceId: null,
   historyFilterInterviewerId: '',  // 履歴フィルタ: 担当者ID（''=全員）
+  historyActiveUserId: '__all__',  // 担当者別タブ: '__all__'=全員, それ以外はuser.id(文字列)
+  historyAll: [],                  // 全履歴キャッシュ（タブ切替用）
 
   render() {
     return `
@@ -266,35 +268,61 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
 
   // ── 履歴ペイン ───────────────────────────────────────
   _renderHistoryPane() {
-    // 担当者フィルタ選択肢
-    const userOptions = this.users.map(u =>
-      `<option value="${u.id}" ${String(this.historyFilterInterviewerId) === String(u.id) ? 'selected' : ''}>${Utils.escHtml(u.name)}</option>`
-    ).join('');
+    // 担当者タブ：全員 + 各ユーザー
+    const tabs = [{ id: '__all__', name: '全員' }, ...this.users.map(u => ({ id: String(u.id), name: u.name }))];
+    const tabsHtml = tabs.map(t => {
+      const active = this.historyActiveUserId === t.id;
+      // このタブの件数
+      const count = t.id === '__all__'
+        ? this.historyAll.length
+        : this.historyAll.filter(h => String(h.interviewer_id) === t.id).length;
+      return `
+        <button onclick="SukuukunPage.switchHistoryTab('${t.id}')"
+          style="padding:6px 14px;border-radius:6px;border:none;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all 0.15s;display:flex;align-items:center;gap:5px;
+            ${active
+              ? 'background:#f59e0b;color:white;box-shadow:0 2px 6px rgba(245,158,11,0.35)'
+              : 'background:white;color:#6b7280;border:1px solid #e5e7eb'}">
+          <i class="fas ${t.id === '__all__' ? 'fa-users' : 'fa-user'}" style="font-size:11px"></i>
+          ${Utils.escHtml(t.name)}
+          ${count > 0 ? `<span style="background:${active?'rgba(255,255,255,0.35)':'#f3f4f6'};color:${active?'white':'#6b7280'};border-radius:8px;padding:0 6px;font-size:10px">${count}</span>` : ''}
+        </button>`;
+    }).join('');
 
     return `
       <div class="card">
-        <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-          <div class="card-title"><i class="fas fa-history" style="color:#f59e0b;margin-right:6px"></i>採点履歴（直近50件）</div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <!-- 担当者フィルタ -->
-            <div style="display:flex;align-items:center;gap:6px">
-              <label style="font-size:11px;font-weight:600;color:#6b7280;white-space:nowrap">
-                <i class="fas fa-user-tie" style="color:#2563eb;margin-right:3px"></i>担当者
-              </label>
-              <select id="history-interviewer-filter" class="form-control" style="font-size:12px;width:130px;padding:4px 8px"
-                onchange="SukuukunPage.filterHistory(this.value)">
-                <option value="">全員</option>
-                ${userOptions}
-              </select>
-            </div>
-            <button class="btn btn-secondary btn-sm" onclick="SukuukunPage.loadHistory()">
+        <div class="card-header" style="background:#fffbeb;border-bottom:1px solid #fde68a;padding-bottom:0">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div class="card-title" style="color:#92400e"><i class="fas fa-history" style="margin-right:6px"></i>採点履歴</div>
+            <button class="btn btn-secondary btn-sm" onclick="SukuukunPage.loadHistory()" style="font-size:11px">
               <i class="fas fa-sync-alt"></i> 更新
             </button>
+          </div>
+          <!-- 担当者別タブ -->
+          <div id="history-user-tabs" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;flex-wrap:nowrap">
+            ${tabsHtml}
           </div>
         </div>
         <div class="card-body" style="padding:0" id="history-list-wrap">
           <div style="text-align:center;padding:32px;color:#9ca3af">
             <i class="fas fa-spinner fa-spin"></i> 読み込み中...
+          </div>
+        </div>
+      </div>
+
+      <!-- 採点詳細モーダル -->
+      <div id="history-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;overflow-y:auto;padding:24px 16px">
+        <div style="max-width:680px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+          <div style="background:linear-gradient(135deg,#f59e0b,#fbbf24);padding:14px 20px;display:flex;align-items:center;justify-content:space-between">
+            <div style="color:white;font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px">
+              <i class="fas fa-robot"></i> 採点結果詳細
+            </div>
+            <button onclick="SukuukunPage.closeHistoryDetail()"
+              style="background:rgba(255,255,255,0.25);border:none;border-radius:6px;color:white;width:28px;height:28px;cursor:pointer;font-size:14px">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div id="history-detail-body" style="padding:20px">
+            <div style="text-align:center;color:#9ca3af;padding:24px"><i class="fas fa-spinner fa-spin"></i></div>
           </div>
         </div>
       </div>
@@ -767,69 +795,224 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
     }, 80);
   },
 
-  // ── 履歴読み込み ──────────────────────────────────────
+  // ── 履歴読み込み（全件取得してキャッシュ）──────────────
   async loadHistory() {
     const wrap = document.getElementById('history-list-wrap');
-    if (!wrap) return;
-    wrap.innerHTML = `<div style="text-align:center;padding:32px;color:#9ca3af"><i class="fas fa-spinner fa-spin"></i></div>`;
+    if (wrap) wrap.innerHTML = `<div style="text-align:center;padding:32px;color:#9ca3af"><i class="fas fa-spinner fa-spin"></i></div>`;
     try {
-      const opts = this.historyFilterInterviewerId
-        ? { interviewer_id: this.historyFilterInterviewerId }
-        : {};
-      this.history = await API.sukuukun.history.list(opts);
-      if (this.history.length === 0) {
-        wrap.innerHTML = `<div style="text-align:center;padding:32px;color:#9ca3af;font-size:13px">採点履歴はありません</div>`;
-        return;
-      }
-      const rows = this.history.map(h => {
-        const sc = h.total_score ?? '-';
-        const col = typeof sc === 'number' ? this._scoreColor(sc, 100) : '#9ca3af';
-        const sources = (() => { try { return JSON.parse(h.source_snapshot || '[]'); } catch(e){ return []; } })();
+      // 全件取得（担当者フィルタなし）
+      this.historyAll = await API.sukuukun.history.list({});
+      // タブを再描画してカウント更新
+      this._refreshHistoryTabs();
+      // 現在タブのデータを描画
+      this._renderHistoryTable();
+    } catch (e) {
+      if (wrap) wrap.innerHTML = `<div style="padding:16px;color:#dc2626;font-size:12px">${Utils.escHtml(e.message)}</div>`;
+    }
+  },
 
-        // 面接結果バッジ
-        const resultBadge = h.interview_result
-          ? `<span style="font-size:10px;padding:1px 7px;border-radius:10px;
+  // ── 担当者タブ再描画 ──────────────────────────────────
+  _refreshHistoryTabs() {
+    const container = document.getElementById('history-user-tabs');
+    if (!container) return;
+    const tabs = [{ id: '__all__', name: '全員' }, ...this.users.map(u => ({ id: String(u.id), name: u.name }))];
+    container.innerHTML = tabs.map(t => {
+      const active = this.historyActiveUserId === t.id;
+      const count = t.id === '__all__'
+        ? this.historyAll.length
+        : this.historyAll.filter(h => String(h.interviewer_id) === t.id).length;
+      return `
+        <button onclick="SukuukunPage.switchHistoryTab('${t.id}')"
+          style="padding:6px 14px;border-radius:6px;border:none;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all 0.15s;display:flex;align-items:center;gap:5px;
+            ${active
+              ? 'background:#f59e0b;color:white;box-shadow:0 2px 6px rgba(245,158,11,0.35)'
+              : 'background:white;color:#6b7280;border:1px solid #e5e7eb'}">
+          <i class="fas ${t.id === '__all__' ? 'fa-users' : 'fa-user'}" style="font-size:11px"></i>
+          ${Utils.escHtml(t.name)}
+          ${count > 0 ? `<span style="background:${active?'rgba(255,255,255,0.35)':'#f3f4f6'};color:${active?'white':'#6b7280'};border-radius:8px;padding:0 6px;font-size:10px">${count}</span>` : ''}
+        </button>`;
+    }).join('');
+  },
+
+  // ── 担当者タブ切り替え ────────────────────────────────
+  switchHistoryTab(userId) {
+    this.historyActiveUserId = userId;
+    this._refreshHistoryTabs();
+    this._renderHistoryTable();
+  },
+
+  // ── 履歴テーブル描画（タブのアクティブユーザーでフィルタ）──
+  _renderHistoryTable() {
+    const wrap = document.getElementById('history-list-wrap');
+    if (!wrap) return;
+
+    const list = this.historyActiveUserId === '__all__'
+      ? this.historyAll
+      : this.historyAll.filter(h => String(h.interviewer_id) === this.historyActiveUserId);
+
+    if (list.length === 0) {
+      wrap.innerHTML = `<div style="text-align:center;padding:32px;color:#9ca3af;font-size:13px">採点履歴はありません</div>`;
+      return;
+    }
+
+    const rows = list.map(h => {
+      const sc  = h.total_score ?? '-';
+      const col = typeof sc === 'number' ? this._scoreColor(sc, 100) : '#9ca3af';
+      const sources = (() => { try { return JSON.parse(h.source_snapshot || '[]'); } catch(e){ return []; } })();
+
+      const resultBadge = h.interview_result
+        ? `<span style="font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;
               background:${h.interview_result==='契約'?'#dcfce7':h.interview_result==='辞退'?'#fee2e2':'#fef3c7'};
-              color:${h.interview_result==='契約'?'#166534':h.interview_result==='辞退'?'#991b1b':'#92400e'};
-              font-weight:600">${Utils.escHtml(h.interview_result)}</span>`
-          : '<span style="color:#d1d5db;font-size:11px">-</span>';
+              color:${h.interview_result==='契約'?'#166534':h.interview_result==='辞退'?'#991b1b':'#92400e'}">
+            ${Utils.escHtml(h.interview_result)}</span>`
+        : '<span style="color:#d1d5db;font-size:11px">-</span>';
 
-        return `<tr>
+      // 全員タブのときだけ担当者列を表示
+      const interviewerCell = this.historyActiveUserId === '__all__'
+        ? `<td style="padding:8px 12px;font-size:11px;color:#374151;font-weight:600">${Utils.escHtml(h.interviewer_name||h.evaluator_name||'')}</td>`
+        : '';
+
+      return `<tr style="border-bottom:1px solid #f3f4f6;transition:background 0.1s" onmouseenter="this.style.background='#fffbeb'" onmouseleave="this.style.background=''">
           <td style="padding:8px 12px;font-size:12px;color:#374151">${Utils.escHtml(h.applicant_name || '（氏名なし）')}</td>
           <td style="padding:8px 12px;text-align:center">
             <span style="font-size:16px;font-weight:700;color:${col}">${sc}</span>
             <span style="font-size:10px;color:#9ca3af">/100</span>
           </td>
-          <td style="padding:8px 12px;font-size:11px;color:#374151;font-weight:600">${Utils.escHtml(h.interviewer_name||h.evaluator_name||'')}</td>
+          ${interviewerCell}
           <td style="padding:8px 12px;text-align:center">${resultBadge}</td>
           <td style="padding:8px 12px;font-size:11px;color:#9ca3af">${h.transcript_length ? h.transcript_length.toLocaleString()+'文字' : '-'}</td>
           <td style="padding:8px 12px;font-size:11px;color:#9ca3af">${sources.map(s=>Utils.escHtml(s.title)).join('、') || '（なし）'}</td>
           <td style="padding:8px 12px;font-size:11px;color:#9ca3af;white-space:nowrap">${new Date(h.created_at).toLocaleString('ja-JP')}</td>
+          <td style="padding:8px 12px">
+            <button onclick="SukuukunPage.openHistoryDetail(${h.id})"
+              style="padding:4px 10px;border-radius:5px;border:1px solid #f59e0b;background:#fffbeb;color:#b45309;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all 0.15s"
+              onmouseenter="this.style.background='#f59e0b';this.style.color='white'"
+              onmouseleave="this.style.background='#fffbeb';this.style.color='#b45309'">
+              <i class="fas fa-chart-bar"></i> 詳細
+            </button>
+          </td>
         </tr>`;
+    }).join('');
+
+    const interviewerHeader = this.historyActiveUserId === '__all__'
+      ? `<th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">面接担当</th>`
+      : '';
+
+    wrap.innerHTML = `
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb">
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">応募者名</th>
+              <th style="padding:8px 12px;text-align:center;font-size:11px;color:#6b7280;font-weight:600">スコア</th>
+              ${interviewerHeader}
+              <th style="padding:8px 12px;text-align:center;font-size:11px;color:#6b7280;font-weight:600">結果</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">文字数</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">参照ソース</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">採点日時</th>
+              <th style="padding:8px 12px;text-align:center;font-size:11px;color:#6b7280;font-weight:600"></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  },
+
+  // ── 採点詳細モーダルを開く ────────────────────────────
+  async openHistoryDetail(id) {
+    const modal = document.getElementById('history-detail-modal');
+    const body  = document.getElementById('history-detail-body');
+    if (!modal || !body) return;
+    modal.style.display = 'block';
+    body.innerHTML = `<div style="text-align:center;padding:32px;color:#9ca3af"><i class="fas fa-spinner fa-spin" style="font-size:24px"></i></div>`;
+
+    try {
+      const h = await API.sukuukun.history.get(id);
+      const ev = h.result_json || {};
+      const total = ev.total_score ?? h.total_score ?? 0;
+      const color = this._scoreColor(total, 100);
+
+      const cats = [
+        { key:'rapport',        label:'ラポール構築', icon:'fa-handshake' },
+        { key:'hearing',        label:'ヒアリング',   icon:'fa-headphones' },
+        { key:'value_proposal', label:'価値提案',     icon:'fa-star' },
+        { key:'closing',        label:'クロージング', icon:'fa-flag-checkered' },
+        { key:'overall_flow',   label:'全体の流れ',   icon:'fa-stream' },
+      ];
+
+      const barsHtml = cats.map(c => {
+        const s  = ev.scores?.[c.key] || {};
+        const sc = s.score ?? 0;
+        const cl = this._scoreColor(sc, 20);
+        return `
+          <div style="margin-bottom:10px;padding:10px 12px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+              <div style="font-size:12px;font-weight:600;color:#1f2937;display:flex;align-items:center;gap:5px">
+                <i class="fas ${c.icon}" style="color:${cl};width:14px;text-align:center"></i>${c.label}
+              </div>
+              <div style="font-size:16px;font-weight:700;color:${cl}">${sc}<span style="font-size:10px;color:#9ca3af;font-weight:400">/20</span></div>
+            </div>
+            <div style="background:#e5e7eb;border-radius:3px;height:5px;overflow:hidden;margin-bottom:7px">
+              <div style="height:100%;width:${Math.round(sc/20*100)}%;background:${cl};border-radius:3px"></div>
+            </div>
+            ${s.good    ? `<div style="font-size:11px;color:#374151;margin-bottom:3px;display:flex;gap:4px"><span style="color:#059669;font-weight:600;flex-shrink:0">👍</span><span>${Utils.escHtml(s.good)}</span></div>` : ''}
+            ${s.improve ? `<div style="font-size:11px;color:#374151;display:flex;gap:4px"><span style="color:#d97706;font-weight:600;flex-shrink:0">💡</span><span>${Utils.escHtml(s.improve)}</span></div>` : ''}
+          </div>`;
       }).join('');
-      wrap.innerHTML = `
-        <div style="overflow-x:auto">
-          <table style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr style="background:#f9fafb;border-bottom:1px solid #e5e7eb">
-                <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">応募者名</th>
-                <th style="padding:8px 12px;text-align:center;font-size:11px;color:#6b7280;font-weight:600">スコア</th>
-                <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">面接担当</th>
-                <th style="padding:8px 12px;text-align:center;font-size:11px;color:#6b7280;font-weight:600">結果</th>
-                <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">文字数</th>
-                <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">参照ソース</th>
-                <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">採点日時</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>`;
+
+      const hlHtml = (ev.highlights||[]).map(hl =>
+        `<div style="font-size:11px;padding:6px 10px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:0 5px 5px 0;margin-bottom:5px;line-height:1.55">${Utils.escHtml(hl)}</div>`
+      ).join('');
+
+      // メタバッジ
+      const badges = [
+        h.applicant_name   && `<span style="background:#eff6ff;color:#1e40af;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">👤 ${Utils.escHtml(h.applicant_name)}</span>`,
+        (h.interviewer_name||h.evaluator_name) && `<span style="background:#f0fdf4;color:#166534;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">🎙️ ${Utils.escHtml(h.interviewer_name||h.evaluator_name)}</span>`,
+        h.interview_result && `<span style="background:${h.interview_result==='契約'?'#dcfce7':h.interview_result==='辞退'?'#fee2e2':'#fef3c7'};color:${h.interview_result==='契約'?'#166534':h.interview_result==='辞退'?'#991b1b':'#92400e'};font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">📋 ${Utils.escHtml(h.interview_result)}</span>`,
+      ].filter(Boolean).join(' ');
+
+      const sources = Array.isArray(h.source_snapshot) ? h.source_snapshot : (() => { try { return JSON.parse(h.source_snapshot||'[]'); } catch(e){ return []; } })();
+
+      body.innerHTML = `
+        <!-- 総合スコア -->
+        <div style="text-align:center;padding:16px;background:${color}18;border-radius:10px;border:2px solid ${color};margin-bottom:16px">
+          ${badges ? `<div style="margin-bottom:8px;display:flex;justify-content:center;gap:6px;flex-wrap:wrap">${badges}</div>` : ''}
+          <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:2px">総合スコア</div>
+          <div style="font-size:52px;font-weight:800;color:${color};line-height:1">${total}</div>
+          <div style="font-size:12px;color:#6b7280">/ 100点</div>
+          <div style="font-size:10px;color:#9ca3af;margin-top:4px">
+            参照ソース: ${sources.length}件
+            ${h.transcript_length ? '・ 文字数: '+h.transcript_length.toLocaleString()+' 文字' : ''}
+            ・ ${new Date(h.created_at).toLocaleString('ja-JP')}
+          </div>
+        </div>
+
+        <!-- 総合コメント -->
+        ${ev.summary ? `
+        <div style="margin-bottom:14px;padding:10px 12px;background:#eff6ff;border-radius:8px;border-left:3px solid #3b82f6">
+          <div style="font-size:11px;font-weight:600;color:#1e40af;margin-bottom:4px"><i class="fas fa-comment-dots"></i> 総合コメント</div>
+          <div style="font-size:12px;color:#1f2937;line-height:1.65">${Utils.escHtml(ev.summary)}</div>
+        </div>` : ''}
+
+        <!-- 各項目 -->
+        <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:8px"><i class="fas fa-list-check" style="color:#f59e0b;margin-right:4px"></i>各項目の採点</div>
+        ${barsHtml}
+
+        <!-- 注目発言 -->
+        ${hlHtml ? `<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px;margin-top:4px"><i class="fas fa-bookmark" style="color:#f59e0b;margin-right:4px"></i>注目の発言</div>${hlHtml}` : ''}
+      `;
     } catch (e) {
-      wrap.innerHTML = `<div style="padding:16px;color:#dc2626;font-size:12px">${Utils.escHtml(e.message)}</div>`;
+      body.innerHTML = `<div style="color:#dc2626;padding:16px;font-size:13px"><i class="fas fa-exclamation-circle"></i> 読み込みエラー: ${Utils.escHtml(e.message)}</div>`;
     }
   },
 
-  // ── 履歴フィルタ ──────────────────────────────────────
+  // ── 採点詳細モーダルを閉じる ──────────────────────────
+  closeHistoryDetail() {
+    const modal = document.getElementById('history-detail-modal');
+    if (modal) modal.style.display = 'none';
+  },
+
+  // ── 履歴フィルタ（後方互換のため残す）───────────────────
   filterHistory(interviewerId) {
     this.historyFilterInterviewerId = interviewerId || '';
     this.loadHistory();
