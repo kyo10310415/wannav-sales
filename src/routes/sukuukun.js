@@ -212,9 +212,9 @@ router.delete('/sources/:id', authenticateToken, (req, res) => {
 // ============================================================
 
 // POST /api/sukuukun/evaluate
-// body: { transcript, applicantName }
+// body: { transcript, applicantName, interviewerId, interviewerName, interviewResult }
 router.post('/evaluate', authenticateToken, async (req, res) => {
-  const { transcript, applicantName } = req.body;
+  const { transcript, applicantName, interviewerId, interviewerName, interviewResult } = req.body;
 
   if (!transcript || transcript.trim().length < 50) {
     return res.status(400).json({ error: '文字起こしテキストが短すぎます（50文字以上必要）' });
@@ -229,9 +229,13 @@ router.post('/evaluate', authenticateToken, async (req, res) => {
   const sources = db.prepare('SELECT title, content FROM sukuukun_sources ORDER BY created_at ASC').all();
   const systemPrompt = buildSystemPrompt(sources);
 
-  const userMessage = applicantName
-    ? `以下は「${applicantName}」さんとの面接（セールス）の文字起こしです。採点・評価してください。\n\n---\n${transcript.trim()}\n---`
-    : `以下は面接（セールス）の文字起こしです。採点・評価してください。\n\n---\n${transcript.trim()}\n---`;
+  let headerParts = [];
+  if (applicantName) headerParts.push(`応募者：${applicantName}`);
+  if (interviewerName) headerParts.push(`面接担当：${interviewerName}`);
+  if (interviewResult) headerParts.push(`面接結果：${interviewResult}`);
+  const header = headerParts.length ? headerParts.join('　') + '\n\n' : '';
+
+  const userMessage = `${header}以下は面接（セールス）の文字起こしです。採点・評価してください。\n\n---\n${transcript.trim()}\n---`;
 
   try {
     const result = await callGemini(systemPrompt, userMessage, apiKey);
@@ -256,12 +260,17 @@ router.post('/evaluate', authenticateToken, async (req, res) => {
       const user = req.user;
       db.prepare(`
         INSERT INTO sukuukun_evaluations
-          (applicant_name, evaluator_id, evaluator_name, transcript_length, total_score, result_json, source_snapshot)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+          (applicant_name, evaluator_id, evaluator_name,
+           interviewer_id, interviewer_name, interview_result,
+           transcript_length, total_score, result_json, source_snapshot)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         applicantName || null,
         user?.id || null,
         user?.name || null,
+        interviewerId || null,
+        interviewerName || null,
+        interviewResult || null,
         transcript.trim().length,
         evaluation.total_score || 0,
         JSON.stringify(evaluation),
@@ -284,14 +293,22 @@ router.post('/evaluate', authenticateToken, async (req, res) => {
 // ============================================================
 
 // GET /api/sukuukun/history
+// query params: interviewer_id (任意: 担当者IDでフィルタ)
 router.get('/history', authenticateToken, (req, res) => {
-  const rows = db.prepare(`
-    SELECT id, applicant_name, evaluator_name, transcript_length,
-           total_score, source_snapshot, created_at
+  const { interviewer_id } = req.query;
+  let sql = `
+    SELECT id, applicant_name, evaluator_name,
+           interviewer_id, interviewer_name, interview_result,
+           transcript_length, total_score, source_snapshot, created_at
     FROM sukuukun_evaluations
-    ORDER BY created_at DESC
-    LIMIT 50
-  `).all();
+  `;
+  const params = [];
+  if (interviewer_id) {
+    sql += ' WHERE interviewer_id = ?';
+    params.push(Number(interviewer_id));
+  }
+  sql += ' ORDER BY created_at DESC LIMIT 50';
+  const rows = db.prepare(sql).all(...params);
   res.json(rows);
 });
 

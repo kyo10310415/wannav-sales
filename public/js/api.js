@@ -133,9 +133,14 @@ const API = {
         });
       },
     },
+    // data: { transcript, applicantName, interviewerId, interviewerName, interviewResult }
     evaluate: (data)  => API.post('/sukuukun/evaluate', data),
     history: {
-      list:  ()   => API.get('/sukuukun/history'),
+      // opts: { interviewer_id } (任意)
+      list:  (opts)   => {
+        const q = opts?.interviewer_id ? `?interviewer_id=${opts.interviewer_id}` : '';
+        return API.get(`/sukuukun/history${q}`);
+      },
       get:   (id) => API.get(`/sukuukun/history/${id}`),
     },
   },

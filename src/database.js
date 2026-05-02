@@ -108,6 +108,9 @@ function initializeDatabase() {
       applicant_name TEXT,
       evaluator_id INTEGER,
       evaluator_name TEXT,
+      interviewer_id INTEGER,
+      interviewer_name TEXT,
+      interview_result TEXT,
       transcript_length INTEGER,
       total_score INTEGER,
       result_json TEXT,
@@ -115,6 +118,21 @@ function initializeDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Migration: sukuukun_evaluations に担当者・結果カラムを追加
+  const evalCols = db.prepare('PRAGMA table_info(sukuukun_evaluations)').all().map(c => c.name);
+  if (!evalCols.includes('interviewer_id')) {
+    db.exec('ALTER TABLE sukuukun_evaluations ADD COLUMN interviewer_id INTEGER');
+    console.log('Migration: sukuukun_evaluations.interviewer_id column added');
+  }
+  if (!evalCols.includes('interviewer_name')) {
+    db.exec('ALTER TABLE sukuukun_evaluations ADD COLUMN interviewer_name TEXT');
+    console.log('Migration: sukuukun_evaluations.interviewer_name column added');
+  }
+  if (!evalCols.includes('interview_result')) {
+    db.exec('ALTER TABLE sukuukun_evaluations ADD COLUMN interview_result TEXT');
+    console.log('Migration: sukuukun_evaluations.interview_result column added');
+  }
 
   // Check if admin user exists
   const adminExists = db.prepare("SELECT id FROM users WHERE login_id = 'admin'").get();
