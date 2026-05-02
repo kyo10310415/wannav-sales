@@ -303,11 +303,21 @@ const TodayInterviewsPage = {
               onclick="TodayInterviewsPage.editReport('${safeId}',${report.id})">
               <i class="fas fa-edit"></i> 編集
             </button>
+            <button class="btn btn-xs" style="font-size:10px;padding:2px 8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:4px;cursor:pointer;margin-top:1px"
+              onclick="TodayInterviewsPage.openSukuukun('${safeId}')">
+              🤖 すくう君
+            </button>
           </div>`
-        : `<button class="btn btn-primary btn-xs" style="font-size:10px;padding:3px 8px"
-            onclick="TodayInterviewsPage.openSalesReport('${safeId}')">
-            <i class="fas fa-plus"></i> 報告
-          </button>`;
+        : `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+            <button class="btn btn-primary btn-xs" style="font-size:10px;padding:3px 8px"
+              onclick="TodayInterviewsPage.openSalesReport('${safeId}')">
+              <i class="fas fa-plus"></i> 報告
+            </button>
+            <button class="btn btn-xs" style="font-size:10px;padding:2px 8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:4px;cursor:pointer;margin-top:1px"
+              onclick="TodayInterviewsPage.openSukuukun('${safeId}')">
+              🤖 すくう君
+            </button>
+          </div>`;
 
       // 性別バッジ
       const genderBadge = gender
@@ -416,5 +426,17 @@ const TodayInterviewsPage = {
     } catch (e) {
       Utils.notify('エラーが発生しました', 'error');
     }
+  },
+
+  // ---------- すくう君 ----------
+  openSukuukun(safeId) {
+    const a = this._cache?.[safeId];
+    if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
+    // 対応する報告から結果を取得
+    const report = this.getReportForApplicant(a);
+    SukuukunModal.open({
+      applicantName: a.full_name || '',
+      interviewResult: report?.result || '',
+    });
   }
 };

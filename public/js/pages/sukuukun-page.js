@@ -2,8 +2,10 @@
 const SukuukunPage = {
   sources: [],
   history: [],
-  activeTab: 'evaluate', // 'evaluate' | 'sources' | 'history'
+  users:   [],          // ユーザー一覧（担当者フィルタ用）
+  activeTab: 'evaluate',
   editingSourceId: null,
+  historyFilterInterviewerId: '',  // 履歴フィルタ: 担当者ID（''=全員）
 
   render() {
     return `
@@ -54,6 +56,15 @@ const SukuukunPage = {
 
   // ── 採点ペイン ──────────────────────────────────────────
   _renderEvaluatePane() {
+    // 担当者ドロップダウン選択肢
+    const userOptions = this.users.map(u =>
+      `<option value="${u.id}" data-name="${Utils.escHtml(u.name)}">${Utils.escHtml(u.name)}</option>`
+    ).join('');
+
+    // ログイン中ユーザーをデフォルト選択
+    const currentUser = typeof Auth !== 'undefined' ? Auth.user : null;
+    const currentUserId = currentUser?.id || '';
+
     return `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <!-- 入力 -->
@@ -62,16 +73,44 @@ const SukuukunPage = {
             <div class="card-title" style="color:#92400e"><i class="fas fa-microphone" style="margin-right:6px"></i>文字起こし入力</div>
           </div>
           <div class="card-body">
-            <div style="margin-bottom:10px">
-              <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px">応募者氏名（任意）</label>
-              <input type="text" id="eval-applicant-name" class="form-control" placeholder="例: 山田 太郎" style="font-size:13px">
+
+            <!-- 3列：応募者・担当者・結果 -->
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+              <div>
+                <label style="font-size:11px;font-weight:600;color:#374151;display:block;margin-bottom:4px">
+                  <i class="fas fa-user" style="color:#f59e0b;margin-right:3px"></i>応募者氏名（任意）
+                </label>
+                <input type="text" id="eval-applicant-name" class="form-control"
+                  placeholder="例: 山田 太郎" style="font-size:12px">
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:600;color:#374151;display:block;margin-bottom:4px">
+                  <i class="fas fa-user-tie" style="color:#2563eb;margin-right:3px"></i>面接担当者
+                </label>
+                <select id="eval-interviewer" class="form-control" style="font-size:12px">
+                  <option value="">-- 選択 --</option>
+                  ${userOptions}
+                </select>
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:600;color:#374151;display:block;margin-bottom:4px">
+                  <i class="fas fa-clipboard-check" style="color:#059669;margin-right:3px"></i>面接結果
+                </label>
+                <select id="eval-interview-result" class="form-control" style="font-size:12px">
+                  <option value="">-- 選択 --</option>
+                  <option value="契約">契約</option>
+                  <option value="辞退">辞退</option>
+                  <option value="持ち帰り">持ち帰り</option>
+                </select>
+              </div>
             </div>
+
             <div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
                 <label style="font-size:12px;font-weight:600;color:#374151">文字起こしテキスト <span style="color:#dc2626">*</span></label>
                 <span id="eval-char-count" style="font-size:11px;color:#9ca3af">0 文字</span>
               </div>
-              <textarea id="eval-transcript" rows="18" class="form-control"
+              <textarea id="eval-transcript" rows="15" class="form-control"
                 placeholder="面接・セールスの文字起こしをここに貼り付けてください。
 NotebookLM・音声認識ツール等で書き起こしたテキストをそのままペーストしてOKです。
 長文（2時間分以上）にも対応しています。
@@ -80,7 +119,7 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
 営業: こんにちは！本日はお時間いただきありがとうございます。
 応募者: よろしくお願いします。
 営業: ぜひ○○さんのことをもっと教えていただければと思いまして…"
-                style="font-size:12px;line-height:1.65;resize:vertical;min-height:320px"></textarea>
+                style="font-size:12px;line-height:1.65;resize:vertical;min-height:280px"></textarea>
             </div>
             <div id="eval-source-badge" style="margin-top:10px;font-size:11px;color:#6b7280;display:flex;align-items:center;gap:5px">
               <i class="fas fa-circle-notch fa-spin"></i> ソース読み込み中...
@@ -109,6 +148,14 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
           </div>
         </div>
       </div>
+
+      <script>
+        // ログイン中ユーザーをデフォルト選択
+        (function(){
+          const sel = document.getElementById('eval-interviewer');
+          if (sel && '${currentUserId}') sel.value = '${currentUserId}';
+        })();
+      </script>
     `;
   },
 
@@ -219,13 +266,31 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
 
   // ── 履歴ペイン ───────────────────────────────────────
   _renderHistoryPane() {
+    // 担当者フィルタ選択肢
+    const userOptions = this.users.map(u =>
+      `<option value="${u.id}" ${String(this.historyFilterInterviewerId) === String(u.id) ? 'selected' : ''}>${Utils.escHtml(u.name)}</option>`
+    ).join('');
+
     return `
       <div class="card">
-        <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+        <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div class="card-title"><i class="fas fa-history" style="color:#f59e0b;margin-right:6px"></i>採点履歴（直近50件）</div>
-          <button class="btn btn-secondary btn-sm" onclick="SukuukunPage.loadHistory()">
-            <i class="fas fa-sync-alt"></i> 更新
-          </button>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <!-- 担当者フィルタ -->
+            <div style="display:flex;align-items:center;gap:6px">
+              <label style="font-size:11px;font-weight:600;color:#6b7280;white-space:nowrap">
+                <i class="fas fa-user-tie" style="color:#2563eb;margin-right:3px"></i>担当者
+              </label>
+              <select id="history-interviewer-filter" class="form-control" style="font-size:12px;width:130px;padding:4px 8px"
+                onchange="SukuukunPage.filterHistory(this.value)">
+                <option value="">全員</option>
+                ${userOptions}
+              </select>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="SukuukunPage.loadHistory()">
+              <i class="fas fa-sync-alt"></i> 更新
+            </button>
+          </div>
         </div>
         <div class="card-body" style="padding:0" id="history-list-wrap">
           <div style="text-align:center;padding:32px;color:#9ca3af">
@@ -238,6 +303,13 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
 
   // ── マウント ──────────────────────────────────────────
   async mount() {
+    // ユーザー一覧を取得（担当者DD用）
+    try {
+      this.users = await API.users.list();
+    } catch (e) {
+      this.users = [];
+    }
+
     // 採点タブのイベント
     const ta = document.getElementById('eval-transcript');
     if (ta) {
@@ -256,6 +328,13 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
         const el = document.getElementById('source-text-count');
         if (el) el.textContent = `${sc.value.length.toLocaleString()} 文字`;
       });
+    }
+
+    // ログイン中ユーザーをデフォルト選択
+    const currentUser = typeof Auth !== 'undefined' ? Auth.user : null;
+    if (currentUser?.id) {
+      const sel = document.getElementById('eval-interviewer');
+      if (sel) sel.value = String(currentUser.id);
     }
 
     await this.loadSources();
@@ -539,6 +618,14 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
     const transcript    = document.getElementById('eval-transcript')?.value.trim() || '';
     const applicantName = document.getElementById('eval-applicant-name')?.value.trim() || '';
 
+    const interviewerSel  = document.getElementById('eval-interviewer');
+    const interviewerId   = interviewerSel?.value ? Number(interviewerSel.value) : null;
+    const interviewerName = interviewerId
+      ? (interviewerSel.options[interviewerSel.selectedIndex]?.dataset?.name || '')
+      : '';
+
+    const interviewResult = document.getElementById('eval-interview-result')?.value || '';
+
     if (transcript.length < 50) {
       Utils.notify('文字起こしテキストが短すぎます（50文字以上）', 'error');
       return;
@@ -559,12 +646,19 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
     }
 
     try {
-      const data = await API.sukuukun.evaluate({ transcript, applicantName });
+      const data = await API.sukuukun.evaluate({
+        transcript,
+        applicantName:   applicantName   || undefined,
+        interviewerId:   interviewerId   || undefined,
+        interviewerName: interviewerName || undefined,
+        interviewResult: interviewResult || undefined,
+      });
+
       if (data.parseError) {
         if (resultBody) resultBody.innerHTML = `<pre style="font-size:11px;padding:12px;white-space:pre-wrap;overflow-x:auto">${Utils.escHtml(data.raw||'')}</pre>`;
         return;
       }
-      this._renderEvalResult(data, transcript.length, applicantName);
+      this._renderEvalResult(data, transcript.length, applicantName, interviewerName, interviewResult);
     } catch (e) {
       if (resultBody) {
         resultBody.innerHTML = `
@@ -587,7 +681,7 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
     return '#dc2626';
   },
 
-  _renderEvalResult(data, txLen, applicantName) {
+  _renderEvalResult(data, txLen, applicantName, interviewerName, interviewResult) {
     const resultBody = document.getElementById('eval-result-body');
     if (!resultBody) return;
 
@@ -626,11 +720,19 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
       ? (data.highlights.map(h => `<div style="font-size:11px;padding:6px 10px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:0 5px 5px 0;margin-bottom:5px;line-height:1.55">${Utils.escHtml(h)}</div>`).join(''))
       : '';
 
+    // メタバッジ
+    const metaBadges = [
+      applicantName   && `<span style="background:#eff6ff;color:#1e40af;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">👤 ${Utils.escHtml(applicantName)}</span>`,
+      interviewerName && `<span style="background:#f0fdf4;color:#166534;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">🎙️ ${Utils.escHtml(interviewerName)}</span>`,
+      interviewResult && `<span style="background:${interviewResult==='契約'?'#dcfce7':interviewResult==='辞退'?'#fee2e2':'#fef3c7'};color:${interviewResult==='契約'?'#166534':interviewResult==='辞退'?'#991b1b':'#92400e'};font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">📋 ${Utils.escHtml(interviewResult)}</span>`,
+    ].filter(Boolean).join(' ');
+
     resultBody.innerHTML = `
       <div style="width:100%">
         <!-- 総合スコア -->
         <div style="text-align:center;padding:16px;background:${color}18;border-radius:10px;border:2px solid ${color};margin-bottom:14px">
-          <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:2px">総合スコア${applicantName ? '（'+Utils.escHtml(applicantName)+'）' : ''}</div>
+          ${metaBadges ? `<div style="margin-bottom:8px;display:flex;justify-content:center;gap:6px;flex-wrap:wrap">${metaBadges}</div>` : ''}
+          <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:2px">総合スコア</div>
           <div style="font-size:52px;font-weight:800;color:${color};line-height:1">${total}</div>
           <div style="font-size:12px;color:#6b7280">/ 100点</div>
           <div style="font-size:10px;color:#9ca3af;margin-top:4px">参照ソース: ${data.sourceCount||0}件 ・ 文字数: ${txLen.toLocaleString()} 文字 ・ ${new Date().toLocaleString('ja-JP')}</div>
@@ -671,7 +773,10 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
     if (!wrap) return;
     wrap.innerHTML = `<div style="text-align:center;padding:32px;color:#9ca3af"><i class="fas fa-spinner fa-spin"></i></div>`;
     try {
-      this.history = await API.sukuukun.history.list();
+      const opts = this.historyFilterInterviewerId
+        ? { interviewer_id: this.historyFilterInterviewerId }
+        : {};
+      this.history = await API.sukuukun.history.list(opts);
       if (this.history.length === 0) {
         wrap.innerHTML = `<div style="text-align:center;padding:32px;color:#9ca3af;font-size:13px">採点履歴はありません</div>`;
         return;
@@ -680,13 +785,23 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
         const sc = h.total_score ?? '-';
         const col = typeof sc === 'number' ? this._scoreColor(sc, 100) : '#9ca3af';
         const sources = (() => { try { return JSON.parse(h.source_snapshot || '[]'); } catch(e){ return []; } })();
+
+        // 面接結果バッジ
+        const resultBadge = h.interview_result
+          ? `<span style="font-size:10px;padding:1px 7px;border-radius:10px;
+              background:${h.interview_result==='契約'?'#dcfce7':h.interview_result==='辞退'?'#fee2e2':'#fef3c7'};
+              color:${h.interview_result==='契約'?'#166534':h.interview_result==='辞退'?'#991b1b':'#92400e'};
+              font-weight:600">${Utils.escHtml(h.interview_result)}</span>`
+          : '<span style="color:#d1d5db;font-size:11px">-</span>';
+
         return `<tr>
           <td style="padding:8px 12px;font-size:12px;color:#374151">${Utils.escHtml(h.applicant_name || '（氏名なし）')}</td>
           <td style="padding:8px 12px;text-align:center">
             <span style="font-size:16px;font-weight:700;color:${col}">${sc}</span>
             <span style="font-size:10px;color:#9ca3af">/100</span>
           </td>
-          <td style="padding:8px 12px;font-size:11px;color:#6b7280">${Utils.escHtml(h.evaluator_name||'')}</td>
+          <td style="padding:8px 12px;font-size:11px;color:#374151;font-weight:600">${Utils.escHtml(h.interviewer_name||h.evaluator_name||'')}</td>
+          <td style="padding:8px 12px;text-align:center">${resultBadge}</td>
           <td style="padding:8px 12px;font-size:11px;color:#9ca3af">${h.transcript_length ? h.transcript_length.toLocaleString()+'文字' : '-'}</td>
           <td style="padding:8px 12px;font-size:11px;color:#9ca3af">${sources.map(s=>Utils.escHtml(s.title)).join('、') || '（なし）'}</td>
           <td style="padding:8px 12px;font-size:11px;color:#9ca3af;white-space:nowrap">${new Date(h.created_at).toLocaleString('ja-JP')}</td>
@@ -699,7 +814,8 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
               <tr style="background:#f9fafb;border-bottom:1px solid #e5e7eb">
                 <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">応募者名</th>
                 <th style="padding:8px 12px;text-align:center;font-size:11px;color:#6b7280;font-weight:600">スコア</th>
-                <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">採点者</th>
+                <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">面接担当</th>
+                <th style="padding:8px 12px;text-align:center;font-size:11px;color:#6b7280;font-weight:600">結果</th>
                 <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">文字数</th>
                 <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">参照ソース</th>
                 <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:600">採点日時</th>
@@ -711,5 +827,11 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
     } catch (e) {
       wrap.innerHTML = `<div style="padding:16px;color:#dc2626;font-size:12px">${Utils.escHtml(e.message)}</div>`;
     }
+  },
+
+  // ── 履歴フィルタ ──────────────────────────────────────
+  filterHistory(interviewerId) {
+    this.historyFilterInterviewerId = interviewerId || '';
+    this.loadHistory();
   }
 };
