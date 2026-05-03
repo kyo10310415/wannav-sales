@@ -30,8 +30,9 @@ function callGemini(systemPrompt, userMessage, apiKey) {
       contents: [{ role: 'user', parts: [{ text: userMessage }] }],
       generationConfig: {
         temperature: 0.3,
-        maxOutputTokens: 8192,
-        responseMimeType: 'application/json'
+        maxOutputTokens: 65536
+        // responseMimeType を指定しない → テキスト出力でJSONを抽出する
+        // （application/json 指定だと長文のtemplate_outputが途中で切れる問題が発生）
       }
     };
 
@@ -319,9 +320,20 @@ router.post('/evaluate', authenticateToken, async (req, res) => {
 
     let evaluation;
     try {
-      const cleaned = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+      // コードブロック（```json ... ``` や ``` ... ```）を除去してパース
+      let cleaned = rawText.trim();
+      // 先頭の ```json または ``` を除去
+      cleaned = cleaned.replace(/^```(?:json)?\s*/i, '');
+      // 末尾の ``` を除去
+      cleaned = cleaned.replace(/\s*```\s*$/i, '');
+      // JSONオブジェクトの開始 { を探して先頭のゴミを除去
+      const jsonStart = cleaned.indexOf('{');
+      const jsonEnd   = cleaned.lastIndexOf('}');
+      if (jsonStart === -1 || jsonEnd === -1) throw new Error('JSON object not found');
+      cleaned = cleaned.slice(jsonStart, jsonEnd + 1);
       evaluation = JSON.parse(cleaned);
     } catch (e) {
+      // パース失敗時は生テキストを返す（フロントで表示）
       return res.json({ raw: rawText, parseError: true });
     }
 
