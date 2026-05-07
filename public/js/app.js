@@ -131,7 +131,6 @@ const App = {
         icon: 'fa-robot',
         label: 'すくう君',
         show: true,
-        style: 'background:#fffbeb;color:#92400e;border-left:3px solid #f59e0b',
       },
       {
         id: 'nav-speech-stats',
@@ -139,7 +138,6 @@ const App = {
         icon: 'fa-microphone-alt',
         label: '発話比率集計',
         show: true,
-        style: 'background:#f5f3ff;color:#5b21b6;border-left:3px solid #7c3aed',
       },
       {
         id: 'nav-users',
@@ -160,14 +158,10 @@ const App = {
           <div class="sidebar-nav">
             ${navItems.filter(n => n.show).map(n => {
               const isActive = this.currentPage === n.page;
-              const customStyle = n.style
-                ? (isActive ? n.style + ';opacity:1;font-weight:700' : n.style)
-                : '';
               return `
               <div class="nav-item ${isActive ? 'active' : ''}" id="${n.id}"
-                onclick="App.navigate('${n.page}')"
-                ${customStyle ? `style="${customStyle}"` : ''}>
-                <i class="fas ${n.icon}"${n.style ? ` style="color:#f59e0b"` : ''}></i>
+                onclick="App.navigate('${n.page}')">
+                <i class="fas ${n.icon}"></i>
                 <span>${n.label}</span>
               </div>`;
             }).join('')}
