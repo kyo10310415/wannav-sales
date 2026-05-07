@@ -28,6 +28,12 @@ const App = {
       title: 'すくう君',
       adminOnly: false,
     },
+    speechStats: {
+      nav: 'nav-speech-stats',
+      module: () => SpeechStatsPage,
+      title: '発話比率集計',
+      adminOnly: false,
+    },
     users: {
       nav: 'nav-users',
       module: () => UsersPage,
@@ -126,6 +132,14 @@ const App = {
         label: 'すくう君',
         show: true,
         style: 'background:#fffbeb;color:#92400e;border-left:3px solid #f59e0b',
+      },
+      {
+        id: 'nav-speech-stats',
+        page: 'speechStats',
+        icon: 'fa-microphone-alt',
+        label: '発話比率集計',
+        show: true,
+        style: 'background:#f5f3ff;color:#5b21b6;border-left:3px solid #7c3aed',
       },
       {
         id: 'nav-users',

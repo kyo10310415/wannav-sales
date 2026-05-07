@@ -875,8 +875,24 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
       // ① ローカルでメトリクス算出（API呼び出し不要）
       const metrics = this._calcMetrics(transcript);
 
-      // ② バックエンドへ（感情シグナル＋アドバイス生成）
-      const result = await API.sukuukun.analyzeSpeech({ transcript, metrics });
+      // ② 担当者・応募者情報を取得
+      const interviewerSel  = document.getElementById('eval-interviewer');
+      const interviewerId   = interviewerSel?.value ? Number(interviewerSel.value) : null;
+      const interviewerName = interviewerId
+        ? (interviewerSel.options[interviewerSel.selectedIndex]?.dataset?.name || '')
+        : '';
+      const applicantName   = document.getElementById('eval-applicant')?.value.trim() || '';
+      const analyzedAt      = new Date().toISOString();
+
+      // ③ バックエンドへ（感情シグナル＋アドバイス生成 + DB保存）
+      const result = await API.sukuukun.analyzeSpeech({
+        transcript,
+        metrics,
+        interviewer_id:   interviewerId   || undefined,
+        interviewer_name: interviewerName || undefined,
+        applicant_name:   applicantName   || undefined,
+        analyzed_at:      analyzedAt,
+      });
 
       this._renderSpeechResult(metrics, result);
     } catch (e) {

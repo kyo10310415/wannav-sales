@@ -474,10 +474,165 @@ router.post('/analyze-speech', authenticateToken, async (req, res) => {
       return res.json({ raw: rawText, parseError: true });
     }
 
+    // ── 結果をDBに保存 ──────────────────────────────────────────
+    const { interviewer_id, interviewer_name, applicant_name, analyzed_at } = req.body;
+    const sr = metrics?.speech_ratio || {};
+    const mo = metrics?.monologue    || {};
+    const ae = metrics?.applicant_engagement || {};
+    const intr = metrics?.interruptions || {};
+    const em   = parsed.emotions || {};
+
+    try {
+      db.prepare(`
+        INSERT INTO sukuukun_speech_analyses (
+          interviewer_id, interviewer_name, applicant_name, analyzed_at,
+          sales_ratio, applicant_ratio, sales_chars, applicant_chars,
+          max_monologue_sec, mono_3min_count, mono_5min_count,
+          applicant_turn_count, silence_over_15s,
+          sales_interrupts, applicant_interrupts,
+          emotion_confusion, emotion_stress, emotion_positive,
+          advice, actions, transcript_length
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        interviewer_id   || null,
+        interviewer_name || null,
+        applicant_name   || null,
+        analyzed_at      || new Date().toISOString(),
+        sr.sales_ratio     ?? null,
+        sr.applicant_ratio ?? null,
+        sr.sales_chars     ?? null,
+        sr.applicant_chars ?? null,
+        mo.max_sec          ?? null,
+        mo.over_3min_count  ?? null,
+        mo.over_5min_count  ?? null,
+        ae.turn_count        ?? null,
+        ae.silence_over_15s  ?? null,
+        intr.sales_to_applicant    ?? null,
+        intr.applicant_to_sales    ?? null,
+        em.confusion ?? null,
+        em.stress    ?? null,
+        em.positive  ?? null,
+        parsed.advice || null,
+        parsed.actions ? JSON.stringify(parsed.actions) : null,
+        transcript.trim().length
+      );
+    } catch (saveErr) {
+      // 保存失敗は握りつぶして結果だけ返す（ログのみ）
+      console.error('[sukuukun] speech-analysis save error:', saveErr);
+    }
+
     res.json(parsed);
   } catch (err) {
     console.error('[sukuukun] analyze-speech error:', err);
     res.status(500).json({ error: '発話分析中にエラーが発生しました: ' + err.message });
+  }
+});
+
+// ============================================================
+// 発話比率集計
+// GET /api/sukuukun/speech-stats
+//   ?month=YYYY-MM  (省略時: 今月)
+// ============================================================
+router.get('/speech-stats', authenticateToken, async (req, res) => {
+  try {
+    const month = req.query.month || new Date().toISOString().slice(0, 7); // 'YYYY-MM'
+
+    // 月の開始・終了
+    const from = `${month}-01`;
+    const to   = `${month}-31`; // SQLite は BETWEEN で超えても翌月以降を除外できる
+
+    // 担当者別の集計
+    const rows = db.prepare(`
+      SELECT
+        COALESCE(interviewer_id, -1)    AS interviewer_id,
+        COALESCE(interviewer_name, '不明') AS interviewer_name,
+        COUNT(*)                         AS analysis_count,
+        ROUND(AVG(sales_ratio), 1)       AS avg_sales_ratio,
+        ROUND(AVG(applicant_ratio), 1)   AS avg_applicant_ratio,
+        ROUND(AVG(max_monologue_sec), 0) AS avg_max_monologue_sec,
+        SUM(mono_3min_count)             AS total_mono_3min,
+        SUM(mono_5min_count)             AS total_mono_5min,
+        ROUND(AVG(applicant_turn_count), 1) AS avg_applicant_turns,
+        SUM(silence_over_15s)            AS total_silence,
+        SUM(sales_interrupts)            AS total_sales_interrupts,
+        SUM(applicant_interrupts)        AS total_applicant_interrupts,
+        ROUND(AVG(emotion_confusion), 1) AS avg_confusion,
+        ROUND(AVG(emotion_stress), 1)    AS avg_stress,
+        ROUND(AVG(emotion_positive), 1)  AS avg_positive
+      FROM sukuukun_speech_analyses
+      WHERE DATE(analyzed_at) BETWEEN ? AND ?
+      GROUP BY interviewer_id, interviewer_name
+      ORDER BY analysis_count DESC
+    `).all(from, to);
+
+    res.json({ month, rows });
+  } catch (err) {
+    console.error('[sukuukun] speech-stats error:', err);
+    res.status(500).json({ error: '集計中にエラーが発生しました: ' + err.message });
+  }
+});
+
+// ============================================================
+// 発話比率集計 詳細（担当者×月）
+// GET /api/sukuukun/speech-stats/detail
+//   ?month=YYYY-MM&interviewer_id=N
+// ============================================================
+router.get('/speech-stats/detail', authenticateToken, async (req, res) => {
+  try {
+    const month          = req.query.month || new Date().toISOString().slice(0, 7);
+    const interviewer_id = req.query.interviewer_id;
+
+    const from = `${month}-01`;
+    const to   = `${month}-31`;
+
+    let query = `
+      SELECT
+        id, interviewer_name, applicant_name,
+        analyzed_at, sales_ratio, applicant_ratio,
+        max_monologue_sec, mono_3min_count, mono_5min_count,
+        applicant_turn_count, silence_over_15s,
+        sales_interrupts, applicant_interrupts,
+        emotion_confusion, emotion_stress, emotion_positive,
+        advice, actions, transcript_length, created_at
+      FROM sukuukun_speech_analyses
+      WHERE DATE(analyzed_at) BETWEEN ? AND ?
+    `;
+    const params = [from, to];
+
+    if (interviewer_id) {
+      query += ' AND interviewer_id = ?';
+      params.push(Number(interviewer_id));
+    }
+    query += ' ORDER BY analyzed_at DESC';
+
+    const rows = db.prepare(query).all(...params);
+
+    // actions は JSON 文字列→配列にパース
+    rows.forEach(r => {
+      try { r.actions = JSON.parse(r.actions); } catch (e) { r.actions = []; }
+    });
+
+    res.json({ month, interviewer_id: interviewer_id || null, rows });
+  } catch (err) {
+    console.error('[sukuukun] speech-stats/detail error:', err);
+    res.status(500).json({ error: '詳細取得中にエラーが発生しました: ' + err.message });
+  }
+});
+
+// ============================================================
+// 利用可能な年月一覧
+// GET /api/sukuukun/speech-stats/months
+// ============================================================
+router.get('/speech-stats/months', authenticateToken, async (req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT DISTINCT SUBSTR(analyzed_at, 1, 7) AS month
+      FROM sukuukun_speech_analyses
+      ORDER BY month DESC
+    `).all();
+    res.json(rows.map(r => r.month));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
