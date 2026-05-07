@@ -41,6 +41,10 @@ app.use((req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`WannaV Sales管理システム - Server running on port ${PORT}`);
+
+  // ── バックグラウンド: Googleカレンダー自動同期（30分ごと）────
+  const calendarSync = require('./src/jobs/calendarSync');
+  calendarSync.start(); // 起動10秒後に初回実行 → 以降30分ごと
 });
 
 module.exports = app;

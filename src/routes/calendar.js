@@ -546,4 +546,23 @@ router.get('/debug', authenticateToken, async (req, res) => {
   res.json({ log });
 });
 
+// ============================================================
+// GET /api/calendar/sync-status
+// バックグラウンド自動同期の最終実行状態を返す
+// ============================================================
+router.get('/sync-status', authenticateToken, (req, res) => {
+  try {
+    const { state } = require('../jobs/calendarSync');
+    res.json({
+      lastRunAt:   state.lastRunAt ? state.lastRunAt.toISOString() : null,
+      lastResult:  state.lastResult  || null,
+      lastError:   state.lastError   || null,
+      running:     state.running,
+      intervalMin: state.intervalMs / 60000,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
