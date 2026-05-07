@@ -682,39 +682,94 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
   _parseTurns(transcript) {
     // 各行を走査してターンを抽出
     const lines = transcript.split('\n');
-    const turns = [];
-    let currentSpeaker = null;
-    let currentText = [];
 
     // 話者パターン: 行頭に「名前:」または「名前：」がある行
-    const speakerRe = /^([\u3040-\u9FFF\u30A0-\u30FF\uFF65-\uFF9FA-Za-z0-9_\s・]{1,20})[：:]\s*(.*)/;
+    // 名前は英字・日本語・数字・アンダースコア・スペース・記号（ハイフン等）を含む 1〜40 文字
+    const speakerRe = /^([^\n：:]{1,40})[：:]\s*(.*)/;
 
-    // 「営業」「講師」「スタッフ」系と「応募者」「生徒」「お客様」系のキーワード
-    const SALES_KEYWORDS    = /営業|講師|スタッフ|担当|インタビュアー|面接官|MC|司会/i;
-    const APPLICANT_KEYWORDS = /応募者|生徒|お客様|候補者|受講者|クライアント|応募|面接者/i;
+    // ── ステップ1: 生のターン配列（{rawLabel, text}）を作る ────────────
+    const rawTurns = [];
+    let curLabel = null;
+    let curText  = [];
 
     for (const line of lines) {
       const m = speakerRe.exec(line.trim());
       if (m) {
-        // 前のターンを保存
-        if (currentSpeaker !== null) {
-          turns.push({ speaker: currentSpeaker, text: currentText.join(' ').trim() });
+        if (curLabel !== null) {
+          rawTurns.push({ rawLabel: curLabel, text: curText.join(' ').trim() });
         }
-        const rawLabel = m[1].trim();
-        // 話者種別を判定
-        let role = 'other';
-        if (SALES_KEYWORDS.test(rawLabel))     role = 'sales';
-        else if (APPLICANT_KEYWORDS.test(rawLabel)) role = 'applicant';
-        currentSpeaker = role;
-        currentText = [m[2]];
-      } else if (currentSpeaker !== null && line.trim()) {
-        currentText.push(line.trim());
+        curLabel = m[1].trim();
+        curText  = [m[2]];
+      } else if (curLabel !== null && line.trim()) {
+        curText.push(line.trim());
       }
     }
-    if (currentSpeaker !== null) {
-      turns.push({ speaker: currentSpeaker, text: currentText.join(' ').trim() });
+    if (curLabel !== null) {
+      rawTurns.push({ rawLabel: curLabel, text: curText.join(' ').trim() });
     }
-    return turns;
+
+    if (rawTurns.length === 0) return [];
+
+    // ── ステップ2: 話者ラベルをキーワードで分類 or 自動分類 ───────────
+    const SALES_KEYWORDS     = /営業|講師|スタッフ|担当|インタビュアー|面接官|MC|司会/i;
+    const APPLICANT_KEYWORDS = /応募者|生徒|お客様|候補者|受講者|クライアント|応募|面接者/i;
+
+    // ラベル→役割マップ（一度決めたら固定）
+    const roleMap = {};
+
+    // キーワードで先に決められるものを分類
+    for (const t of rawTurns) {
+      const lbl = t.rawLabel;
+      if (roleMap[lbl]) continue;
+      if (SALES_KEYWORDS.test(lbl))      roleMap[lbl] = 'sales';
+      else if (APPLICANT_KEYWORDS.test(lbl)) roleMap[lbl] = 'applicant';
+      // else: 未分類のまま（後で自動分類）
+    }
+
+    // キーワードで分類できなかったラベルを自動分類
+    const unknownLabels = [...new Set(rawTurns.map(t => t.rawLabel).filter(l => !roleMap[l]))];
+
+    if (unknownLabels.length > 0) {
+      // ラベル別の総文字数を集計
+      const charCount = {};
+      for (const t of rawTurns) {
+        if (!unknownLabels.includes(t.rawLabel)) continue;
+        charCount[t.rawLabel] = (charCount[t.rawLabel] || 0) + t.text.replace(/\s+/g, '').length;
+      }
+
+      // すでに sales / applicant が確定している場合は残りを反対側に
+      const hasSales     = Object.values(roleMap).includes('sales');
+      const hasApplicant = Object.values(roleMap).includes('applicant');
+
+      if (hasSales && !hasApplicant) {
+        // 営業系が判明済み → 残りは全員 applicant
+        for (const lbl of unknownLabels) roleMap[lbl] = 'applicant';
+      } else if (!hasSales && hasApplicant) {
+        // 応募者系が判明済み → 残りは全員 sales
+        for (const lbl of unknownLabels) roleMap[lbl] = 'sales';
+      } else if (!hasSales && !hasApplicant) {
+        // 全員未分類: 最多発話者を sales、残りを applicant
+        const sorted = Object.entries(charCount).sort((a, b) => b[1] - a[1]);
+        if (sorted.length === 1) {
+          roleMap[sorted[0][0]] = 'sales';
+        } else if (sorted.length >= 2) {
+          roleMap[sorted[0][0]] = 'sales';
+          for (let i = 1; i < sorted.length; i++) roleMap[sorted[i][0]] = 'applicant';
+        }
+      } else {
+        // sales も applicant も確定済み: 残りは発話量で振り分け
+        // より近い側（sales / applicant の既存ラベル数や文字数で判断）
+        // 簡易実装: 未分類ラベルが 1 つなら applicant、2 つ以上なら最多発話を sales 追加
+        for (const lbl of unknownLabels) roleMap[lbl] = 'applicant';
+      }
+    }
+
+    // ── ステップ3: role を付けて最終ターン配列を返す ─────────────────
+    return rawTurns.map(t => ({
+      speaker: roleMap[t.rawLabel] || 'other',
+      rawLabel: t.rawLabel,
+      text: t.text,
+    }));
   },
 
   // ── メトリクスを算出 ───────────────────────────────────────
