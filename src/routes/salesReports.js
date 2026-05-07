@@ -147,6 +147,17 @@ router.delete('/:id', authenticateToken, (req, res) => {
   res.json({ message: '削除しました' });
 });
 
+// ============================================================
+// 契約判定・重複除外（stats.js と共通ロジック）
+// ============================================================
+const SR_CONTRACT_CONDITION = `result IN ('契約', '契約＆職業案内', '契約＆職業案内（CP）')`;
+const SR_DEDUP_SUBQUERY = `(
+  SELECT * FROM sales_reports
+  WHERE id IN (
+    SELECT MAX(id) FROM sales_reports GROUP BY applicant_full_name
+  )
+) AS sr`;
+
 // GET /api/sales-reports/stats/cvr - CVR集計
 router.get('/stats/cvr', authenticateToken, (req, res) => {
   const { period, value } = req.query;
@@ -162,16 +173,18 @@ router.get('/stats/cvr', authenticateToken, (req, res) => {
     params = [value];
   }
 
+  const dedupBase = `FROM ${SR_DEDUP_SUBQUERY}`;
+
   const totalInterviews = db.prepare(`
-    SELECT COUNT(*) as count FROM sales_reports ${dateFilter}
+    SELECT COUNT(*) as count ${dedupBase} ${dateFilter}
   `).get(...params);
 
-  const contractCondition = dateFilter
-    ? dateFilter + " AND (result LIKE '%契約%' OR result = '契約')"
-    : "WHERE (result LIKE '%契約%' OR result = '契約')";
+  const contractFilter = dateFilter
+    ? `${dedupBase} ${dateFilter} AND ${SR_CONTRACT_CONDITION}`
+    : `${dedupBase} WHERE ${SR_CONTRACT_CONDITION}`;
 
   const totalContracts = db.prepare(`
-    SELECT COUNT(*) as count FROM sales_reports ${contractCondition}
+    SELECT COUNT(*) as count ${contractFilter}
   `).get(...params);
 
   res.json({
@@ -189,8 +202,8 @@ router.get('/stats/weekly', authenticateToken, (req, res) => {
     SELECT
       strftime('%Y-W%W', created_at) as week,
       COUNT(*) as total_interviews,
-      SUM(CASE WHEN result LIKE '%契約%' OR result = '契約' THEN 1 ELSE 0 END) as total_contracts
-    FROM sales_reports
+      SUM(CASE WHEN ${SR_CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
+    FROM ${SR_DEDUP_SUBQUERY}
     GROUP BY week
     ORDER BY week DESC
     LIMIT 12
@@ -204,8 +217,8 @@ router.get('/stats/monthly', authenticateToken, (req, res) => {
     SELECT
       strftime('%Y-%m', created_at) as month,
       COUNT(*) as total_interviews,
-      SUM(CASE WHEN result LIKE '%契約%' OR result = '契約' THEN 1 ELSE 0 END) as total_contracts
-    FROM sales_reports
+      SUM(CASE WHEN ${SR_CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
+    FROM ${SR_DEDUP_SUBQUERY}
     GROUP BY month
     ORDER BY month DESC
     LIMIT 12
