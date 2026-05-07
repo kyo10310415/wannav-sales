@@ -119,6 +119,37 @@ function initializeDatabase() {
     )
   `);
 
+  // Migration: sales_reports に新カラムを追加
+  const srCols = db.prepare('PRAGMA table_info(sales_reports)').all().map(c => c.name);
+  if (!srCols.includes('interview_date')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN interview_date TEXT');
+    console.log('Migration: sales_reports.interview_date column added');
+  }
+  if (!srCols.includes('interview_content')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN interview_content TEXT');
+    console.log('Migration: sales_reports.interview_content column added');
+  }
+  if (!srCols.includes('stay_count')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN stay_count INTEGER DEFAULT 0');
+    console.log('Migration: sales_reports.stay_count column added');
+  }
+  if (!srCols.includes('no_count')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN no_count INTEGER DEFAULT 0');
+    console.log('Migration: sales_reports.no_count column added');
+  }
+  if (!srCols.includes('join_reasons')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN join_reasons TEXT');
+    console.log('Migration: sales_reports.join_reasons column added');
+  }
+  if (!srCols.includes('decline_reasons')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN decline_reasons TEXT');
+    console.log('Migration: sales_reports.decline_reasons column added');
+  }
+  if (!srCols.includes('phone_number')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN phone_number TEXT');
+    console.log('Migration: sales_reports.phone_number column added');
+  }
+
   // Migration: sukuukun_evaluations に担当者・結果カラムを追加
   const evalCols = db.prepare('PRAGMA table_info(sukuukun_evaluations)').all().map(c => c.name);
   if (!evalCols.includes('interviewer_id')) {
