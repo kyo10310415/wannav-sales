@@ -40,13 +40,18 @@ router.post('/', authenticateToken, (req, res) => {
     applicant_email,
     student_number,
     interview_date,
-    interview_time,
+    interview_content,
     result,
+    stay_count,
+    no_count,
     contract_plan,
     payment_method,
     notion_url,
     lesson_start_date,
     character_rights,
+    join_reasons,
+    decline_reasons,
+    phone_number,
     details
   } = req.body;
 
@@ -59,18 +64,23 @@ router.post('/', authenticateToken, (req, res) => {
       INSERT INTO sales_reports (
         interviewer_id, interviewer_name, applicant_full_name,
         applicant_last_name, applicant_first_name, applicant_email,
-        student_number, interview_date, interview_time, result, contract_plan,
+        student_number, interview_date, interview_content, result,
+        stay_count, no_count, contract_plan,
         payment_method, notion_url, lesson_start_date,
-        character_rights, details
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        character_rights, join_reasons, decline_reasons, phone_number, details
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result_db = stmt.run(
       interviewer_id, interviewer_name, applicant_full_name,
       applicant_last_name, applicant_first_name, applicant_email,
-      student_number, interview_date || null, interview_time, result, contract_plan,
+      student_number, interview_date || null, interview_content,
+      result, stay_count ?? 0, no_count ?? 0, contract_plan,
       payment_method, notion_url, lesson_start_date,
-      character_rights, details
+      character_rights,
+      Array.isArray(join_reasons) ? join_reasons.join(',') : (join_reasons || ''),
+      Array.isArray(decline_reasons) ? decline_reasons.join(',') : (decline_reasons || ''),
+      phone_number, details
     );
 
     const report = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(result_db.lastInsertRowid);
@@ -92,25 +102,32 @@ router.put('/:id', authenticateToken, (req, res) => {
   const {
     interviewer_id, interviewer_name, applicant_full_name,
     applicant_last_name, applicant_first_name, applicant_email,
-    student_number, interview_date, interview_time, result, contract_plan,
+    student_number, interview_date, interview_content, result,
+    stay_count, no_count, contract_plan,
     payment_method, notion_url, lesson_start_date,
-    character_rights, details
+    character_rights, join_reasons, decline_reasons, phone_number, details
   } = req.body;
 
   db.prepare(`
     UPDATE sales_reports SET
       interviewer_id = ?, interviewer_name = ?, applicant_full_name = ?,
       applicant_last_name = ?, applicant_first_name = ?, applicant_email = ?,
-      student_number = ?, interview_date = ?, interview_time = ?, result = ?, contract_plan = ?,
+      student_number = ?, interview_date = ?, interview_content = ?, result = ?,
+      stay_count = ?, no_count = ?, contract_plan = ?,
       payment_method = ?, notion_url = ?, lesson_start_date = ?,
-      character_rights = ?, details = ?, updated_at = CURRENT_TIMESTAMP
+      character_rights = ?, join_reasons = ?, decline_reasons = ?,
+      phone_number = ?, details = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
     interviewer_id, interviewer_name, applicant_full_name,
     applicant_last_name, applicant_first_name, applicant_email,
-    student_number, interview_date || null, interview_time, result, contract_plan,
+    student_number, interview_date || null, interview_content, result,
+    stay_count ?? 0, no_count ?? 0, contract_plan,
     payment_method, notion_url, lesson_start_date,
-    character_rights, details, id
+    character_rights,
+    Array.isArray(join_reasons) ? join_reasons.join(',') : (join_reasons || ''),
+    Array.isArray(decline_reasons) ? decline_reasons.join(',') : (decline_reasons || ''),
+    phone_number, details, id
   );
 
   const updated = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(id);
@@ -133,14 +150,11 @@ router.delete('/:id', authenticateToken, (req, res) => {
 // GET /api/sales-reports/stats/cvr - CVR集計
 router.get('/stats/cvr', authenticateToken, (req, res) => {
   const { period, value } = req.query;
-  // period: 'week' | 'month'
-  // value: 'YYYY-WXX' for week, 'YYYY-MM' for month
 
   let dateFilter = '';
   let params = [];
 
   if (period === 'week' && value) {
-    // Filter by week (strftime('%Y-W%W', created_at) = value)
     dateFilter = "WHERE strftime('%Y-W%W', created_at) = ?";
     params = [value];
   } else if (period === 'month' && value) {
@@ -148,12 +162,10 @@ router.get('/stats/cvr', authenticateToken, (req, res) => {
     params = [value];
   }
 
-  // 面接実施数（全レコード数）
   const totalInterviews = db.prepare(`
     SELECT COUNT(*) as count FROM sales_reports ${dateFilter}
   `).get(...params);
 
-  // 契約数（resultが「契約」を含む）
   const contractCondition = dateFilter
     ? dateFilter + " AND (result LIKE '%契約%' OR result = '契約')"
     : "WHERE (result LIKE '%契約%' OR result = '契約')";
