@@ -403,4 +403,82 @@ router.get('/history/:id', authenticateToken, (req, res) => {
   res.json(row);
 });
 
+// ============================================================
+// 発話比率分析
+// POST /api/sukuukun/analyze-speech
+// body: { transcript, metrics }
+//   transcript : 文字起こし全文
+//   metrics    : フロントで算出した数値メトリクス（JSON）
+// ============================================================
+router.post('/analyze-speech', authenticateToken, async (req, res) => {
+  const { transcript, metrics } = req.body;
+
+  if (!transcript || transcript.trim().length < 50) {
+    return res.status(400).json({ error: '文字起こしテキストが短すぎます（50文字以上必要）' });
+  }
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY が設定されていません' });
+  }
+
+  const metricsText = metrics ? JSON.stringify(metrics, null, 2) : '（メトリクスなし）';
+
+  const systemPrompt = `あなたは営業コーチです。
+面接・セールスの文字起こしと、事前に算出した発話メトリクスを受け取り、
+感情シグナルの推定と改善アドバイスを行ってください。
+
+【出力フォーマット — 厳守】
+必ず以下の JSON 形式のみで返答してください。JSONの前後に説明文・マークダウン・コードブロックを付けないこと。
+
+{
+  "emotions": {
+    "confusion":  <0〜100の整数: 困惑度推定>,
+    "stress":     <0〜100の整数: ストレス推定>,
+    "positive":   <0〜100の整数: ポジティブ度推定>
+  },
+  "emotion_notes": {
+    "confusion_reason":  "<困惑の根拠（50文字以内）>",
+    "stress_reason":     "<ストレスの根拠（50文字以内）>",
+    "positive_reason":   "<ポジティブの根拠（50文字以内）>"
+  },
+  "advice": "<200〜500文字の改善アドバイス>",
+  "actions": [
+    "<具体的な改善アクション1（50文字以内）>",
+    "<具体的な改善アクション2（50文字以内）>",
+    "<具体的な改善アクション3（50文字以内）>"
+  ]
+}`;
+
+  const userMessage = `【発話メトリクス】\n${metricsText}\n\n【文字起こし（抜粋）】\n${transcript.trim().slice(0, 6000)}`;
+
+  try {
+    const result = await callGemini(systemPrompt, userMessage, apiKey);
+
+    if (result.status !== 200) {
+      const errMsg = result.body?.error?.message || JSON.stringify(result.body).slice(0, 300);
+      return res.status(502).json({ error: `Gemini APIエラー (${result.status}): ${errMsg}` });
+    }
+
+    const rawText = result.body?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    let parsed;
+    try {
+      let cleaned = rawText.trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```\s*$/i, '');
+      const s = cleaned.indexOf('{');
+      const e = cleaned.lastIndexOf('}');
+      if (s === -1 || e === -1) throw new Error('JSON not found');
+      parsed = JSON.parse(cleaned.slice(s, e + 1));
+    } catch (e) {
+      return res.json({ raw: rawText, parseError: true });
+    }
+
+    res.json(parsed);
+  } catch (err) {
+    console.error('[sukuukun] analyze-speech error:', err);
+    res.status(500).json({ error: '発話分析中にエラーが発生しました: ' + err.message });
+  }
+});
+
 module.exports = router;

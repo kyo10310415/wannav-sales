@@ -135,6 +135,8 @@ const API = {
     },
     // data: { transcript, applicantName, interviewerId, interviewerName, interviewResult }
     evaluate: (data)  => API.post('/sukuukun/evaluate', data),
+    // data: { transcript, metrics }
+    analyzeSpeech: (data) => API.post('/sukuukun/analyze-speech', data),
     history: {
       // opts: { interviewer_id } (任意)
       list:  (opts)   => {

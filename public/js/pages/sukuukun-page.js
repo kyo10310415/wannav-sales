@@ -126,7 +126,11 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
             <div id="eval-source-badge" style="margin-top:10px;font-size:11px;color:#6b7280;display:flex;align-items:center;gap:5px">
               <i class="fas fa-circle-notch fa-spin"></i> ソース読み込み中...
             </div>
-            <div style="display:flex;justify-content:flex-end;margin-top:12px">
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+              <button id="speech-analyze-btn" onclick="SukuukunPage.submitSpeechAnalysis()"
+                style="padding:10px 18px;background:#6366f1;border:none;border-radius:8px;color:white;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:7px;box-shadow:0 2px 8px rgba(99,102,241,0.35)">
+                <i class="fas fa-wave-square"></i> 発話比率分析
+              </button>
               <button id="eval-submit-btn" onclick="SukuukunPage.submitEvaluate()"
                 style="padding:10px 24px;background:#f59e0b;border:none;border-radius:8px;color:white;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 2px 8px rgba(245,158,11,0.4)">
                 <i class="fas fa-robot"></i> すくう君に採点してもらう
@@ -667,6 +671,338 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
     } catch (e) {
       Utils.notify('削除エラー: ' + e.message, 'error');
     }
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  // 発話比率分析
+  // ══════════════════════════════════════════════════════════════
+
+  // ── テキストから話者ターンを抽出 ──────────────────────────────
+  // 「営業:」「応募者:」「講師:」などの行頭ラベルを検出してターン分割する
+  _parseTurns(transcript) {
+    // 各行を走査してターンを抽出
+    const lines = transcript.split('\n');
+    const turns = [];
+    let currentSpeaker = null;
+    let currentText = [];
+
+    // 話者パターン: 行頭に「名前:」または「名前：」がある行
+    const speakerRe = /^([\u3040-\u9FFF\u30A0-\u30FF\uFF65-\uFF9FA-Za-z0-9_\s・]{1,20})[：:]\s*(.*)/;
+
+    // 「営業」「講師」「スタッフ」系と「応募者」「生徒」「お客様」系のキーワード
+    const SALES_KEYWORDS    = /営業|講師|スタッフ|担当|インタビュアー|面接官|MC|司会/i;
+    const APPLICANT_KEYWORDS = /応募者|生徒|お客様|候補者|受講者|クライアント|応募|面接者/i;
+
+    for (const line of lines) {
+      const m = speakerRe.exec(line.trim());
+      if (m) {
+        // 前のターンを保存
+        if (currentSpeaker !== null) {
+          turns.push({ speaker: currentSpeaker, text: currentText.join(' ').trim() });
+        }
+        const rawLabel = m[1].trim();
+        // 話者種別を判定
+        let role = 'other';
+        if (SALES_KEYWORDS.test(rawLabel))     role = 'sales';
+        else if (APPLICANT_KEYWORDS.test(rawLabel)) role = 'applicant';
+        currentSpeaker = role;
+        currentText = [m[2]];
+      } else if (currentSpeaker !== null && line.trim()) {
+        currentText.push(line.trim());
+      }
+    }
+    if (currentSpeaker !== null) {
+      turns.push({ speaker: currentSpeaker, text: currentText.join(' ').trim() });
+    }
+    return turns;
+  },
+
+  // ── メトリクスを算出 ───────────────────────────────────────
+  _calcMetrics(transcript) {
+    const turns = this._parseTurns(transcript);
+    const totalChars = transcript.replace(/\s+/g, '').length || 1;
+
+    // 話者別文字数
+    let salesChars = 0, applicantChars = 0;
+    for (const t of turns) {
+      const c = t.text.replace(/\s+/g, '').length;
+      if (t.speaker === 'sales')     salesChars     += c;
+      else if (t.speaker === 'applicant') applicantChars += c;
+    }
+    const salesRatio     = Math.round(salesChars / totalChars * 100);
+    const applicantRatio = Math.round(applicantChars / totalChars * 100);
+
+    // 発話ターン数（応募者）
+    const applicantTurns = turns.filter(t => t.speaker === 'applicant').length;
+
+    // セールスの連続発話（同じ話者が連続するブロックを連結して推定）
+    // 1文字 ≈ 0.15秒 として推定（日本語平均発話速度 約400文字/分）
+    const CHARS_PER_SEC = 400 / 60;
+    const salesBlocks = [];
+    let buf = 0;
+    for (const t of turns) {
+      if (t.speaker === 'sales') {
+        buf += t.text.replace(/\s+/g, '').length;
+      } else {
+        if (buf > 0) { salesBlocks.push(buf); buf = 0; }
+      }
+    }
+    if (buf > 0) salesBlocks.push(buf);
+
+    const blockSecs = salesBlocks.map(c => Math.round(c / CHARS_PER_SEC));
+    const maxMonologueSec  = blockSecs.length ? Math.max(...blockSecs) : 0;
+    const mono3minCount    = blockSecs.filter(s => s > 180).length;
+    const mono5minCount    = blockSecs.filter(s => s > 300).length;
+
+    // 15秒超の沈黙を簡易検出（「…」「(沈黙)」「間」などのラベル）
+    const silenceRe = /\(沈黙\)|\[沈黙\]|（沈黙）|間\.\.\.|\.\.\.\s*(沈黙|pause|silence)/gi;
+    const silenceCount = (transcript.match(silenceRe) || []).length;
+
+    // 割り込みを簡易検出（「—」「ーー」「っ—」などで文が終わっている直後に話者交代）
+    const interruptRe = /[—ーっっ]\s*$/;
+    let salesInterrupts = 0, applicantInterrupts = 0;
+    for (let i = 1; i < turns.length; i++) {
+      const prev = turns[i - 1];
+      const cur  = turns[i];
+      if (interruptRe.test(prev.text)) {
+        if (cur.speaker === 'sales')     salesInterrupts++;
+        else if (cur.speaker === 'applicant') applicantInterrupts++;
+      }
+    }
+
+    return {
+      speech_ratio: {
+        sales_ratio:     salesRatio,
+        applicant_ratio: applicantRatio,
+        sales_chars:     salesChars,
+        applicant_chars: applicantChars,
+      },
+      monologue: {
+        max_sec:          maxMonologueSec,
+        over_3min_count:  mono3minCount,
+        over_5min_count:  mono5minCount,
+      },
+      applicant_engagement: {
+        turn_count:        applicantTurns,
+        silence_over_15s:  silenceCount,
+      },
+      interruptions: {
+        sales_to_applicant:    salesInterrupts,
+        applicant_to_sales:    applicantInterrupts,
+      },
+      _turns_detected: turns.length,
+    };
+  },
+
+  // ── 分析実行ハンドラ ───────────────────────────────────────
+  async submitSpeechAnalysis() {
+    const transcript = document.getElementById('eval-transcript')?.value.trim() || '';
+    if (transcript.length < 50) {
+      Utils.notify('文字起こしテキストが短すぎます（50文字以上）', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('speech-analyze-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 分析中…'; }
+
+    const resultBody = document.getElementById('eval-result-body');
+    if (resultBody) {
+      resultBody.style.display = 'block';
+      resultBody.innerHTML = `
+        <div style="text-align:center;color:#6b7280;padding:32px">
+          <div style="font-size:36px;margin-bottom:12px">📊</div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:6px">発話を分析中です…</div>
+          <div style="font-size:12px;color:#9ca3af">テキスト解析 → Gemini AIでアドバイス生成中</div>
+        </div>`;
+    }
+
+    try {
+      // ① ローカルでメトリクス算出（API呼び出し不要）
+      const metrics = this._calcMetrics(transcript);
+
+      // ② バックエンドへ（感情シグナル＋アドバイス生成）
+      const result = await API.sukuukun.analyzeSpeech({ transcript, metrics });
+
+      this._renderSpeechResult(metrics, result);
+    } catch (e) {
+      if (resultBody) {
+        resultBody.innerHTML = `
+          <div style="text-align:center;color:#dc2626;padding:24px">
+            <i class="fas fa-exclamation-circle" style="font-size:32px;margin-bottom:8px;display:block"></i>
+            <div style="font-size:13px;font-weight:600">${Utils.escHtml(e.message)}</div>
+          </div>`;
+      }
+      Utils.notify('分析エラー: ' + e.message, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wave-square"></i> 発話比率分析'; }
+    }
+  },
+
+  // ── 分析結果表示 ────────────────────────────────────────────
+  _renderSpeechResult(metrics, ai) {
+    const body = document.getElementById('eval-result-body');
+    if (!body) return;
+
+    const sr   = metrics.speech_ratio;
+    const mono = metrics.monologue;
+    const eng  = metrics.applicant_engagement;
+    const intr = metrics.interruptions;
+    const emo  = ai.emotions || {};
+    const notes= ai.emotion_notes || {};
+
+    // 発話比率バー
+    const salesPct = sr.sales_ratio;
+    const appPct   = sr.applicant_ratio;
+    const salesColor = salesPct > 80 ? '#dc2626' : salesPct > 65 ? '#d97706' : '#2563eb';
+
+    // 最長連続発話を分秒表示
+    const fmtSec = s => s >= 60 ? `${Math.floor(s/60)}分${s%60}秒` : `${s}秒`;
+
+    // 感情バー色
+    const emoColor = v => v >= 70 ? '#dc2626' : v >= 40 ? '#d97706' : '#16a34a';
+    const posColor = v => v >= 60 ? '#16a34a' : v >= 30 ? '#d97706' : '#dc2626';
+
+    // 改善アクション
+    const actionsHtml = (ai.actions || []).map((a, i) => `
+      <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;background:#f0fdf4;border-radius:6px;border-left:3px solid #16a34a;margin-bottom:6px">
+        <span style="background:#16a34a;color:white;font-size:10px;font-weight:700;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0">${i+1}</span>
+        <span style="font-size:12px;color:#1f2937;line-height:1.5">${Utils.escHtml(a)}</span>
+      </div>`).join('');
+
+    body.style.display = 'block';
+    body.innerHTML = `
+      <div style="width:100%">
+
+        <!-- ヘッダー -->
+        <div style="padding:10px 14px;background:linear-gradient(135deg,#6366f1,#818cf8);border-radius:10px;margin-bottom:14px;color:white;display:flex;align-items:center;gap:8px">
+          <i class="fas fa-wave-square" style="font-size:18px"></i>
+          <div>
+            <div style="font-size:13px;font-weight:700">発話比率分析レポート</div>
+            <div style="font-size:11px;opacity:0.85">Gemini AI による感情シグナル・改善アドバイス付き</div>
+          </div>
+        </div>
+
+        <!-- 発話比率 -->
+        <div style="margin-bottom:12px;padding:12px 14px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb">
+          <div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:8px">
+            <i class="fas fa-comments" style="color:#6366f1;margin-right:5px"></i>発話比率
+          </div>
+          <div style="margin-bottom:5px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;font-weight:600;margin-bottom:3px">
+              <span style="color:${salesColor}">🎙️ 講師 ${salesPct}%</span>
+              <span style="color:#374151">${sr.sales_chars.toLocaleString()}文字</span>
+            </div>
+            <div style="background:#e5e7eb;border-radius:3px;height:8px;overflow:hidden">
+              <div style="height:100%;width:${salesPct}%;background:${salesColor};border-radius:3px;transition:width 0.6s ease"></div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;font-weight:600;margin-bottom:3px">
+              <span style="color:#2563eb">👤 応募者 ${appPct}%</span>
+              <span style="color:#374151">${sr.applicant_chars.toLocaleString()}文字</span>
+            </div>
+            <div style="background:#e5e7eb;border-radius:3px;height:8px;overflow:hidden">
+              <div style="height:100%;width:${appPct}%;background:#2563eb;border-radius:3px;transition:width 0.6s ease"></div>
+            </div>
+          </div>
+          ${salesPct > 75 ? `<div style="margin-top:7px;font-size:11px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">⚠️ 講師の発話比率が高めです。応募者に話してもらう時間を増やしましょう。</div>` : ''}
+        </div>
+
+        <!-- セールスの連続発話 / 応募者の参加度 -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+          <div style="padding:10px 12px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb">
+            <div style="font-size:11px;font-weight:700;color:#374151;margin-bottom:7px">
+              <i class="fas fa-microphone-alt" style="color:#f59e0b;margin-right:4px"></i>セールスの連続発話
+            </div>
+            <div style="font-size:11px;color:#374151;margin-bottom:3px">
+              <span style="color:#6b7280">最長連続発話：</span>
+              <span style="font-weight:700;color:${mono.max_sec > 300 ? '#dc2626' : mono.max_sec > 180 ? '#d97706' : '#16a34a'}">${fmtSec(mono.max_sec)}</span>
+            </div>
+            <div style="font-size:11px;color:#374151;margin-bottom:3px">
+              <span style="color:#6b7280">3分超モノローグ：</span>
+              <span style="font-weight:700;color:${mono.over_3min_count > 0 ? '#d97706' : '#16a34a'}">${mono.over_3min_count}回</span>
+            </div>
+            <div style="font-size:11px;color:#374151">
+              <span style="color:#6b7280">5分超モノローグ：</span>
+              <span style="font-weight:700;color:${mono.over_5min_count > 0 ? '#dc2626' : '#16a34a'}">${mono.over_5min_count}回</span>
+            </div>
+          </div>
+          <div style="padding:10px 12px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb">
+            <div style="font-size:11px;font-weight:700;color:#374151;margin-bottom:7px">
+              <i class="fas fa-user-check" style="color:#2563eb;margin-right:4px"></i>応募者の参加度
+            </div>
+            <div style="font-size:11px;color:#374151;margin-bottom:3px">
+              <span style="color:#6b7280">発話ターン数：</span>
+              <span style="font-weight:700;color:${eng.turn_count < 10 ? '#dc2626' : eng.turn_count < 20 ? '#d97706' : '#16a34a'}">${eng.turn_count}回</span>
+            </div>
+            <div style="font-size:11px;color:#374151;margin-bottom:7px">
+              <span style="color:#6b7280">15秒超の沈黙：</span>
+              <span style="font-weight:700;color:${eng.silence_over_15s > 3 ? '#d97706' : '#16a34a'}">${eng.silence_over_15s}回</span>
+            </div>
+            <div style="font-size:11px;font-weight:700;color:#374151;margin-bottom:5px">
+              <i class="fas fa-bolt" style="color:#dc2626;margin-right:4px"></i>割り込み
+            </div>
+            <div style="font-size:11px;color:#374151;margin-bottom:2px">
+              <span style="color:#6b7280">講師→応募者：</span>
+              <span style="font-weight:700">${intr.sales_to_applicant}回</span>
+            </div>
+            <div style="font-size:11px;color:#374151">
+              <span style="color:#6b7280">応募者→講師：</span>
+              <span style="font-weight:700">${intr.applicant_to_sales}回</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 感情シグナル -->
+        <div style="margin-bottom:12px;padding:12px 14px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb">
+          <div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:8px">
+            <i class="fas fa-heart-pulse" style="color:#ec4899;margin-right:5px"></i>感情シグナル
+            <span style="font-size:10px;font-weight:400;color:#9ca3af;margin-left:6px">Gemini AI 推定</span>
+          </div>
+          ${[
+            { label:'😕 困惑推定',     val: emo.confusion||0, color: emoColor(emo.confusion||0), note: notes.confusion_reason },
+            { label:'😰 ストレス推定', val: emo.stress||0,    color: emoColor(emo.stress||0),    note: notes.stress_reason },
+            { label:'😊 ポジティブ',   val: emo.positive||0,  color: posColor(emo.positive||0),  note: notes.positive_reason },
+          ].map(e => `
+            <div style="margin-bottom:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+                <span style="font-size:11px;font-weight:600;color:#374151">${e.label}</span>
+                <span style="font-size:13px;font-weight:700;color:${e.color}">${e.val}%</span>
+              </div>
+              <div style="background:#e5e7eb;border-radius:3px;height:6px;overflow:hidden;margin-bottom:3px">
+                <div style="height:100%;width:${e.val}%;background:${e.color};border-radius:3px;transition:width 0.6s ease"></div>
+              </div>
+              ${e.note ? `<div style="font-size:10px;color:#6b7280">${Utils.escHtml(e.note)}</div>` : ''}
+            </div>`).join('')}
+        </div>
+
+        <!-- 改善アドバイス -->
+        ${ai.advice ? `
+        <div style="margin-bottom:12px;padding:12px 14px;background:#eff6ff;border-radius:8px;border-left:3px solid #3b82f6">
+          <div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:6px">
+            <i class="fas fa-lightbulb"></i> 改善アドバイス
+          </div>
+          <div style="font-size:12px;color:#1f2937;line-height:1.7">${Utils.escHtml(ai.advice)}</div>
+        </div>` : ''}
+
+        <!-- 具体的な改善アクション -->
+        ${actionsHtml ? `
+        <div style="margin-bottom:4px">
+          <div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:7px">
+            <i class="fas fa-list-check" style="color:#16a34a;margin-right:5px"></i>具体的な改善アクション
+          </div>
+          ${actionsHtml}
+        </div>` : ''}
+
+      </div>`;
+
+    // バーアニメーション
+    setTimeout(() => {
+      body.querySelectorAll('[style*="width:"]').forEach(el => {
+        const w = el.style.width;
+        if (w && w.endsWith('%')) { el.style.width = '0'; setTimeout(() => { el.style.width = w; }, 60); }
+      });
+    }, 80);
   },
 
   // ── 採点実行 ──────────────────────────────────────────
