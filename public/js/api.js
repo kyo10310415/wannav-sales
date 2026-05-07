@@ -135,8 +135,24 @@ const API = {
     },
     // data: { transcript, applicantName, interviewerId, interviewerName, interviewResult }
     evaluate: (data)  => API.post('/sukuukun/evaluate', data),
-    // data: { transcript, metrics }
+    // data: { transcript, metrics, interviewer_id, interviewer_name, applicant_name, analyzed_at }
     analyzeSpeech: (data) => API.post('/sukuukun/analyze-speech', data),
+    speechStats: {
+      // 担当者別月次集計 opts: { month: 'YYYY-MM' }
+      summary: (opts) => {
+        const q = opts?.month ? `?month=${opts.month}` : '';
+        return API.get(`/sukuukun/speech-stats${q}`);
+      },
+      // 詳細一覧 opts: { month, interviewer_id }
+      detail: (opts) => {
+        const p = new URLSearchParams();
+        if (opts?.month)          p.set('month',          opts.month);
+        if (opts?.interviewer_id) p.set('interviewer_id', opts.interviewer_id);
+        return API.get(`/sukuukun/speech-stats/detail?${p.toString()}`);
+      },
+      // 存在する年月一覧
+      months: () => API.get('/sukuukun/speech-stats/months'),
+    },
     history: {
       // opts: { interviewer_id } (任意)
       list:  (opts)   => {

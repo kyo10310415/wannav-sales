@@ -165,6 +165,35 @@ function initializeDatabase() {
     console.log('Migration: sukuukun_evaluations.interview_result column added');
   }
 
+  // すくう君発話比率分析履歴テーブル
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sukuukun_speech_analyses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      interviewer_id INTEGER,
+      interviewer_name TEXT,
+      applicant_name TEXT,
+      analyzed_at TEXT,
+      sales_ratio INTEGER,
+      applicant_ratio INTEGER,
+      sales_chars INTEGER,
+      applicant_chars INTEGER,
+      max_monologue_sec INTEGER,
+      mono_3min_count INTEGER,
+      mono_5min_count INTEGER,
+      applicant_turn_count INTEGER,
+      silence_over_15s INTEGER,
+      sales_interrupts INTEGER,
+      applicant_interrupts INTEGER,
+      emotion_confusion INTEGER,
+      emotion_stress INTEGER,
+      emotion_positive INTEGER,
+      advice TEXT,
+      actions TEXT,
+      transcript_length INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Check if admin user exists
   const adminExists = db.prepare("SELECT id FROM users WHERE login_id = 'admin'").get();
   if (!adminExists) {
