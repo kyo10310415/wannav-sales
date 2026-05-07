@@ -4,9 +4,21 @@ const db = require('../database');
 const { authenticateToken } = require('../middleware/auth');
 
 // ============================================================
-// 契約判定SQL（営業報告の result に「契約」を含む）
+// 契約判定SQL
+// 「契約」「契約＆職業案内」「契約＆職業案内（CP）」のみ TRUE
 // ============================================================
-const CONTRACT_CONDITION = `(result LIKE '%契約%' OR result = '契約')`;
+const CONTRACT_CONDITION = `result IN ('契約', '契約＆職業案内', '契約＆職業案内（CP）')`;
+
+// ============================================================
+// 同一応募者の重複レコードを除いた最新1件ベースのサブクエリ
+// applicant_full_name でグループ化し MAX(id) = 最新レコードのみ使用
+// ============================================================
+const DEDUP_SUBQUERY = `(
+  SELECT * FROM sales_reports
+  WHERE id IN (
+    SELECT MAX(id) FROM sales_reports GROUP BY applicant_full_name
+  )
+) AS sr`;
 
 // ============================================================
 // GET /api/stats/weekly
@@ -17,7 +29,7 @@ router.get('/weekly', authenticateToken, (req, res) => {
       strftime('%Y-W%W', created_at) as period,
       COUNT(*) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
-    FROM sales_reports
+    FROM ${DEDUP_SUBQUERY}
     GROUP BY period
     ORDER BY period DESC
     LIMIT 24
@@ -39,7 +51,7 @@ router.get('/monthly', authenticateToken, (req, res) => {
       strftime('%Y-%m', created_at) as period,
       COUNT(*) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
-    FROM sales_reports
+    FROM ${DEDUP_SUBQUERY}
     GROUP BY period
     ORDER BY period DESC
     LIMIT 24
@@ -75,20 +87,24 @@ router.get('/summary', authenticateToken, (req, res) => {
     params = [value];
   }
 
-  // 営業報告ベースの契約数（参考値）
-  const contractFilterSQL = dateFilter
-    ? `${dateFilter} AND ${CONTRACT_CONDITION}`
-    : `WHERE ${CONTRACT_CONDITION}`;
+  // 重複除外後フィルタSQL（期間絞り込みをサブクエリの外側に適用）
+  const dedupBase = `FROM ${DEDUP_SUBQUERY}`;
+  const dedupWhere = dateFilter.replace('WHERE', 'WHERE');
+  const dedupDateFilter = dateFilter ? dateFilter : '';
+  const contractFilterSQL = dedupDateFilter
+    ? `${dedupBase} ${dedupDateFilter} AND ${CONTRACT_CONDITION}`
+    : `${dedupBase} WHERE ${CONTRACT_CONDITION}`;
 
+  // 営業報告ベースの契約数（重複除外・正確な3値判定）
   const contractsFromReport = db.prepare(`
-    SELECT COUNT(*) as count FROM sales_reports ${contractFilterSQL}
+    SELECT COUNT(*) as count ${contractFilterSQL}
   `).get(...params);
 
   // 面接実施数: スプレッドシートの「面接実施」=TRUE件数を優先
-  // 未設定（0）の場合は営業報告の件数をフォールバックとして使用
+  // 未設定（0）の場合は営業報告の件数（重複除外）をフォールバックとして使用
   const interviewFromSheet = parseInt(interview_count) || 0;
   const interviewFromDB = db.prepare(`
-    SELECT COUNT(*) as count FROM sales_reports ${dateFilter}
+    SELECT COUNT(*) as count ${dedupBase} ${dedupDateFilter}
   `).get(...params);
   const totalInterviews = interviewFromSheet > 0 ? interviewFromSheet : interviewFromDB.count;
 
@@ -134,7 +150,7 @@ router.get('/all-periods', authenticateToken, (req, res) => {
       ${fmt} as period,
       COUNT(*) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
-    FROM sales_reports
+    FROM ${DEDUP_SUBQUERY}
     GROUP BY period
     ORDER BY period DESC
     LIMIT ${limit}
