@@ -305,14 +305,22 @@ const AnalysisPage = {
                 CVR ${meta.cvr || 0}%
               </div>
             </div>
-            <button class="btn btn-sm btn-secondary" style="font-size:11px" onclick="AnalysisPage._copyResult()">
-              <i class="fas fa-copy"></i> コピー
-            </button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-sm btn-secondary" style="font-size:11px" onclick="AnalysisPage._copyResult()">
+                <i class="fas fa-copy"></i> コピー
+              </button>
+              <button id="analysis-export-btn" class="btn btn-sm" style="font-size:11px;background:#16a34a;border-color:#16a34a;color:#fff"
+                onclick="AnalysisPage.exportSheet()">
+                <i class="fas fa-file-export"></i> スプレッドシートに書き出す
+              </button>
+            </div>
           </div>
           <div style="margin-top:12px;padding:12px 14px;background:var(--gray-50,#f9fafb);border-radius:8px;font-size:13px;color:var(--gray-700);line-height:1.7">
             <i class="fas fa-comment-dots" style="color:#0ea5e9;margin-right:6px"></i>
             <strong>質問:</strong> ${Utils.escHtml(question)}
           </div>
+          <!-- 書き出し完了バナー（書き出し後に表示） -->
+          <div id="analysis-export-banner" style="display:none"></div>
         </div>
       </div>
 
@@ -420,5 +428,65 @@ const AnalysisPage = {
       () => Utils.notify('分析結果をコピーしました', 'success'),
       () => Utils.notify('コピーに失敗しました', 'error')
     );
+  },
+
+  // ────────────────────────────────────────────────────────────
+  async exportSheet() {
+    if (!this.result) {
+      Utils.notify('先に分析を実行してください', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('analysis-export-btn');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 書き出し中…';
+    }
+
+    try {
+      const payload = {
+        result:  this.result,
+        rawData: this.result._rawData || null,
+      };
+      const resp = await API.analysis.exportSheet(payload);
+
+      // 成功トースト + スプレッドシートへのリンク通知
+      Utils.notify('スプレッドシートに書き出しました', 'success');
+
+      // 結果エリアにリンクバナーを表示
+      const banner = document.getElementById('analysis-export-banner');
+      if (banner) {
+        banner.innerHTML = `
+          <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;
+                      background:#f0fdf4;border:1px solid #86efac;border-radius:8px;margin-top:12px">
+            <i class="fas fa-check-circle" style="color:#16a34a;font-size:18px;flex-shrink:0"></i>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:700;color:#166534;margin-bottom:2px">
+                スプレッドシートに書き出しました
+              </div>
+              <div style="font-size:11px;color:#15803d">
+                「${Utils.escHtml(resp.summarySheet)}」シートに分析結果を追記
+                ／「${Utils.escHtml(resp.recordsSheet)}」シートに${resp.recordsWritten}件の使用データを追記
+              </div>
+            </div>
+            <a href="${Utils.escHtml(resp.spreadsheetUrl)}" target="_blank" rel="noopener"
+               style="flex-shrink:0;font-size:12px;font-weight:600;color:#0ea5e9;
+                      text-decoration:none;display:flex;align-items:center;gap:4px;
+                      padding:6px 12px;border:1px solid #0ea5e9;border-radius:6px;
+                      background:#fff;white-space:nowrap">
+              <i class="fas fa-external-link-alt"></i> シートを開く
+            </a>
+          </div>`;
+        banner.style.display = 'block';
+      }
+
+    } catch (e) {
+      Utils.notify('書き出しエラー: ' + e.message, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-file-export"></i> スプレッドシートに書き出す';
+      }
+    }
   },
 };
