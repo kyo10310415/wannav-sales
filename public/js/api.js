@@ -173,4 +173,9 @@ const API = {
       return API.get(`/stats/summary?${q}`);
     },
   },
+
+  // Data Analysis
+  analysis: {
+    run: (data) => API.post('/analysis/run', data),
+  },
 };

@@ -24,6 +24,7 @@ app.use('/api/stats', require('./src/routes/stats'));
 app.use('/api/interview-dates', require('./src/routes/interviewDates'));
 app.use('/api/calendar', require('./src/routes/calendar'));
 app.use('/api/sukuukun', require('./src/routes/sukuukun'));
+app.use('/api/analysis', require('./src/routes/analysis'));
 
 // Health check
 app.get('/api/health', (req, res) => {
