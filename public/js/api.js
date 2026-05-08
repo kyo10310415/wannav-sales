@@ -177,5 +177,6 @@ const API = {
   // Data Analysis
   analysis: {
     run: (data) => API.post('/analysis/run', data),
+    exportSheet: (data) => API.post('/analysis/export-sheet', data),
   },
 };
