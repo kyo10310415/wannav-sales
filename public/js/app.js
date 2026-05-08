@@ -34,6 +34,12 @@ const App = {
       title: '発話比率集計',
       adminOnly: false,
     },
+    analysis: {
+      nav: 'nav-analysis',
+      module: () => AnalysisPage,
+      title: 'データ分析',
+      adminOnly: false,
+    },
     users: {
       nav: 'nav-users',
       module: () => UsersPage,
@@ -137,6 +143,13 @@ const App = {
         page: 'speechStats',
         icon: 'fa-microphone-alt',
         label: '発話比率集計',
+        show: true,
+      },
+      {
+        id: 'nav-analysis',
+        page: 'analysis',
+        icon: 'fa-brain',
+        label: 'データ分析',
         show: true,
       },
       {
