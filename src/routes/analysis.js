@@ -140,20 +140,61 @@ router.post('/run', authenticateToken, async (req, res) => {
     ORDER BY sr.interview_date DESC, sr.created_at DESC
   `).all(from, to, from, to);
 
-  // ── ③ 集計データを生成 ───────────────────────────────────
-  const totalReports   = reports.length;
-  const contractReports = reports.filter(r => CONTRACT_RESULTS.has(r.result));
-  const contractCount  = contractReports.length;
-  const cvrPct         = totalReports > 0
+  // ── ③ スプレッドシートキャッシュ取得・期間フィルター ────────
+  const sheetApplicants = (spreadsheetCache && spreadsheetCache.data)
+    ? spreadsheetCache.data.applicants : [];
+
+  const sheetInPeriod = sheetApplicants.filter(a => {
+    if (!a.date_parsed) return false;
+    const d = a.date_parsed.toISOString().slice(0, 10);
+    return d >= from && d <= to;
+  });
+
+  // ── ④ 名寄せ: 営業報告を優先してシートデータとマージ ───────
+  // 氏名正規化（スペース除去・小文字化）
+  const normalName = s => (s || '').replace(/[\s　]/g, '').toLowerCase();
+
+  // シートデータをMap化
+  const sheetByName = new Map();
+  for (const a of sheetInPeriod) {
+    const key = normalName(a.full_name);
+    if (key) sheetByName.set(key, a);
+  }
+
+  // 営業報告に存在する名前セット
+  const reportNames = new Set(reports.map(r => normalName(r.applicant_full_name)));
+
+  // シートにのみ存在する応募者（営業報告未記入）
+  const sheetOnlyApplicants = sheetInPeriod.filter(
+    a => !reportNames.has(normalName(a.full_name))
+  );
+
+  // 営業報告レコードにシートデータを補完（性別・広告媒体等）
+  const mergedReports = reports.map(r => {
+    const key   = normalName(r.applicant_full_name);
+    const sheet = sheetByName.get(key) || null;
+    return {
+      ...r,
+      _gender:            sheet?.raw?.['性別']     || '',
+      _birth:             sheet?.raw?.['生年月日'] || '',
+      _ad_source:         sheet?.raw?.['広告媒体'] || '',
+      _is_doc_pass:       sheet ? sheet.is_doc_pass        : null,
+      _is_interview_resv: sheet ? sheet.is_interview_resv  : null,
+      _sheet_matched:     !!sheet,
+    };
+  });
+
+  // ── ⑤ 集計データを生成 ───────────────────────────────────
+  const totalReports    = mergedReports.length;
+  const contractCount   = mergedReports.filter(r => CONTRACT_RESULTS.has(r.result)).length;
+  const cvrPct          = totalReports > 0
     ? Math.round(contractCount / totalReports * 1000) / 10 : 0;
 
   // 担当者別集計
   const byInterviewer = {};
-  for (const r of reports) {
+  for (const r of mergedReports) {
     const name = r.interviewer_name || '不明';
-    if (!byInterviewer[name]) {
-      byInterviewer[name] = { total: 0, contract: 0, results: {} };
-    }
+    if (!byInterviewer[name]) byInterviewer[name] = { total: 0, contract: 0, results: {} };
     byInterviewer[name].total++;
     if (CONTRACT_RESULTS.has(r.result)) byInterviewer[name].contract++;
     const res_ = r.result || '未記入';
@@ -162,14 +203,14 @@ router.post('/run', authenticateToken, async (req, res) => {
 
   // 結果別集計
   const byResult = {};
-  for (const r of reports) {
+  for (const r of mergedReports) {
     const res_ = r.result || '未記入';
     byResult[res_] = (byResult[res_] || 0) + 1;
   }
 
   // 面接内容別集計
   const byContent = {};
-  for (const r of reports) {
+  for (const r of mergedReports) {
     const c = r.interview_content || '未記入';
     if (!byContent[c]) byContent[c] = { total: 0, contract: 0 };
     byContent[c].total++;
@@ -178,21 +219,21 @@ router.post('/run', authenticateToken, async (req, res) => {
 
   // 支払い方法別集計
   const byPayment = {};
-  for (const r of reports) {
+  for (const r of mergedReports) {
     const p = r.payment_method || '未記入';
     byPayment[p] = (byPayment[p] || 0) + 1;
   }
 
   // STAY/NO 平均
   const avgStay = totalReports > 0
-    ? Math.round(reports.reduce((s, r) => s + (r.stay_count || 0), 0) / totalReports * 10) / 10 : 0;
+    ? Math.round(mergedReports.reduce((s, r) => s + (r.stay_count || 0), 0) / totalReports * 10) / 10 : 0;
   const avgNo = totalReports > 0
-    ? Math.round(reports.reduce((s, r) => s + (r.no_count || 0), 0) / totalReports * 10) / 10 : 0;
+    ? Math.round(mergedReports.reduce((s, r) => s + (r.no_count || 0), 0) / totalReports * 10) / 10 : 0;
 
   // 入会理由 / 辞退理由 集計
   const joinReasonCount = {};
   const declineReasonCount = {};
-  for (const r of reports) {
+  for (const r of mergedReports) {
     (r.join_reasons || '').split(',').map(s => s.trim()).filter(Boolean).forEach(reason => {
       joinReasonCount[reason] = (joinReasonCount[reason] || 0) + 1;
     });
@@ -201,23 +242,40 @@ router.post('/run', authenticateToken, async (req, res) => {
     });
   }
 
-  // スプレッドシートキャッシュからファネル数取得
-  const sheetApplicants = (spreadsheetCache && spreadsheetCache.data)
-    ? spreadsheetCache.data.applicants : [];
+  // ── シート固有集計 ────────────────────────────────────────
+  const sheetTotal      = sheetInPeriod.length;
+  const sheetDocPass    = sheetInPeriod.filter(a => a.is_doc_pass).length;
+  const sheetIntervResv = sheetInPeriod.filter(a => a.is_interview_resv).length;
+  const sheetInterview  = sheetInPeriod.filter(a => a.is_interview).length;
+  const sheetCV         = sheetInPeriod.filter(a => a.is_cv).length;
 
-  // 期間内の応募者数（シート）
-  const sheetInPeriod = sheetApplicants.filter(a => {
-    if (!a.date_parsed) return false;
-    const d = a.date_parsed.toISOString().slice(0, 10);
-    return d >= from && d <= to;
-  });
-  const sheetTotal       = sheetInPeriod.length;
-  const sheetDocPass     = sheetInPeriod.filter(a => a.is_doc_pass).length;
-  const sheetIntervResv  = sheetInPeriod.filter(a => a.is_interview_resv).length;
-  const sheetInterview   = sheetInPeriod.filter(a => a.is_interview).length;
-  const sheetCV          = sheetInPeriod.filter(a => a.is_cv).length;
+  const docPassRate   = sheetTotal > 0 ? Math.round(sheetDocPass   / sheetTotal    * 1000) / 10 : 0;
+  const interviewRate = sheetDocPass > 0 ? Math.round(sheetInterview / sheetDocPass * 1000) / 10 : 0;
 
-  // ── ④ Geminiへ渡すデータ文字列を構築 ─────────────────────
+  // 性別別集計（シートベース）
+  const byGender = {};
+  for (const a of sheetInPeriod) {
+    const g = a.raw?.['性別'] || '不明';
+    if (!byGender[g]) byGender[g] = { total: 0, interview: 0, cv: 0 };
+    byGender[g].total++;
+    if (a.is_interview) byGender[g].interview++;
+    if (a.is_cv)        byGender[g].cv++;
+  }
+
+  // 広告媒体別集計（シートベース）
+  const byAdSource = {};
+  for (const a of sheetInPeriod) {
+    const src = a.raw?.['広告媒体'] || '不明';
+    byAdSource[src] = (byAdSource[src] || 0) + 1;
+  }
+
+  // シートのみ応募者サマリー
+  const sheetOnlyTotal     = sheetOnlyApplicants.length;
+  const sheetOnlyDocPass   = sheetOnlyApplicants.filter(a => a.is_doc_pass).length;
+  const sheetOnlyInterview = sheetOnlyApplicants.filter(a => a.is_interview).length;
+  const sheetOnlyCV        = sheetOnlyApplicants.filter(a => a.is_cv).length;
+
+  // ── ⑥ Geminiへ渡すデータ文字列を構築 ─────────────────────
   const interviewerSummary = Object.entries(byInterviewer)
     .sort((a, b) => b[1].total - a[1].total)
     .map(([name, d]) => {
@@ -247,33 +305,61 @@ router.post('/run', authenticateToken, async (req, res) => {
     .sort((a, b) => b[1] - a[1]).slice(0, 8)
     .map(([r, n]) => `  - ${r}: ${n}件`).join('\n');
 
-  // 個別レコード（直近50件。詳細分析用）
-  const recentRecords = reports.slice(0, 50).map(r =>
-    `[${r.interview_date || r.created_at?.slice(0,10)}] 担当:${r.interviewer_name || '-'} ` +
-    `応募者:${r.applicant_full_name || '-'} 内容:${r.interview_content || '-'} ` +
+  const genderSummary = Object.entries(byGender)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([g, d]) => {
+      const ivRate = d.total > 0 ? Math.round(d.interview / d.total * 1000) / 10 : 0;
+      const cvRate = d.total > 0 ? Math.round(d.cv        / d.total * 1000) / 10 : 0;
+      return `  - ${g}: 応募${d.total}人 / 面接${d.interview}人(${ivRate}%) / CV${d.cv}人(${cvRate}%)`;
+    }).join('\n');
+
+  const adSourceSummary = Object.entries(byAdSource)
+    .sort((a, b) => b[1] - a[1]).slice(0, 10)
+    .map(([src, n]) => `  - ${src}: ${n}人`).join('\n');
+
+  // 個別レコード（マージ済み・直近50件）
+  const recentRecords = mergedReports.slice(0, 50).map(r =>
+    `[${r.interview_date || r.created_at?.slice(0, 10)}] 担当:${r.interviewer_name || '-'} ` +
+    `応募者:${r.applicant_full_name || '-'} ` +
+    (r._gender     ? `性別:${r._gender} `     : '') +
+    (r._ad_source  ? `媒体:${r._ad_source} `  : '') +
+    `内容:${r.interview_content || '-'} ` +
     `結果:${r.result || '-'} STAY:${r.stay_count ?? '-'} NO:${r.no_count ?? '-'} ` +
     `支払:${r.payment_method || '-'} 権利:${r.character_rights || '-'} ` +
-    (r.join_reasons   ? `入会理由:[${r.join_reasons}] ` : '') +
+    (r.join_reasons    ? `入会理由:[${r.join_reasons}] `    : '') +
     (r.decline_reasons ? `辞退理由:[${r.decline_reasons}] ` : '') +
     (r.details ? `備考:${r.details.slice(0, 60)}` : '')
   ).join('\n');
 
+  // シートのみ応募者（直近20件）
+  const sheetOnlyRecords = sheetOnlyApplicants.slice(0, 20).map(a =>
+    `[${a.date_str}] 応募者:${a.full_name || '-'} ` +
+    `性別:${a.raw?.['性別'] || '-'} 媒体:${a.raw?.['広告媒体'] || '-'} ` +
+    `書類通過:${a.is_doc_pass ? '○' : '×'} 面接予約:${a.is_interview_resv ? '○' : '×'} ` +
+    `面接実施:${a.is_interview ? '○' : '×'} CV:${a.is_cv ? '○' : '×'}`
+  ).join('\n');
+
   const dataText = `
 【分析期間】${date_from || '全期間'} 〜 ${date_to || '現在'}
+【データ統合】営業報告DB ${totalReports}件 ＋ スプレッドシート ${sheetTotal}人（重複は営業報告を優先）
 
-【ファネル（スプレッドシート）】
-  応募者数: ${sheetTotal}人
-  書類通過: ${sheetDocPass}人
-  面接予約: ${sheetIntervResv}人
-  面接実施: ${sheetInterview}人
-  CV（面接予約済）: ${sheetCV}人
+【ファネル（スプレッドシート全体）】
+  応募者数:   ${sheetTotal}人
+  書類通過:   ${sheetDocPass}人（書類通過率 ${docPassRate}%）
+  面接予約:   ${sheetIntervResv}人
+  面接実施:   ${sheetInterview}人（書類通過→面接化率 ${interviewRate}%）
+  CV:         ${sheetCV}人
 
-【営業報告サマリー】
-  総面接件数: ${totalReports}件
-  契約件数:   ${contractCount}件
-  CVR（面接→契約）: ${cvrPct}%
-  平均STAYの回数: ${avgStay}回
-  平均NOの回数:   ${avgNo}回
+【ファネル内訳 — 営業報告未記入の応募者（シートのみ）】
+  ※面接を実施したが営業報告が未入力、または面接未到達の応募者
+  シートのみ: ${sheetOnlyTotal}人 / 書類通過: ${sheetOnlyDocPass}人 / 面接実施: ${sheetOnlyInterview}人 / CV: ${sheetOnlyCV}人
+
+【営業報告サマリー（面接実施ベース）】
+  総面接件数:        ${totalReports}件
+  契約件数:          ${contractCount}件
+  CVR（面接→契約）:  ${cvrPct}%
+  平均STAYの回数:    ${avgStay}回
+  平均NOの回数:      ${avgNo}回
 
 【担当者別集計】
 ${interviewerSummary || '  データなし'}
@@ -284,14 +370,23 @@ ${contentSummary || '  データなし'}
 【結果別集計】
 ${resultSummary || '  データなし'}
 
+【性別別集計（スプレッドシートベース）】
+${genderSummary || '  データなし'}
+
+【広告媒体別応募数TOP（スプレッドシートベース）】
+${adSourceSummary || '  データなし'}
+
 【入会理由TOP（契約者）】
 ${joinTop || '  データなし'}
 
 【辞退理由TOP】
 ${declineTop || '  データなし'}
 
-【直近${Math.min(50, totalReports)}件の個別レコード】
+【直近${Math.min(50, totalReports)}件の個別レコード（営業報告＋シート統合）】
 ${recentRecords || '  データなし'}
+
+【直近${Math.min(20, sheetOnlyTotal)}件のシートのみ応募者（営業報告未記入）】
+${sheetOnlyRecords || '  データなし'}
 `.trim();
 
   // ── ⑤ Gemini呼び出し ──────────────────────────────────────
