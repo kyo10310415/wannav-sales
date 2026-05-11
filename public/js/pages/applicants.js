@@ -501,7 +501,7 @@ const ApplicantsPage = {
           }
           <button class="btn btn-xs" title="すくう君で採点"
             style="font-size:10px;padding:2px 5px;background:#fef3c7;border:1px solid #f59e0b;color:#92400e;border-radius:4px;white-space:nowrap;cursor:pointer"
-            onclick="SukuukunModal.open(ApplicantsPage._cache?.['${safeId}'])">
+            onclick="ApplicantsPage.openSukuukun('${safeId}')">
             🤖 すくう君
           </button>
         </div>`;
@@ -664,5 +664,16 @@ const ApplicantsPage = {
     } catch (e) {
       Utils.notify('エラーが発生しました', 'error');
     }
+  },
+
+  // ---------- すくう君 ----------
+  openSukuukun(safeId) {
+    const a = this._cache?.[safeId];
+    if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
+    const report = this.getReportForApplicant(a);
+    SukuukunModal.open({
+      applicantName:   a.full_name || '',
+      interviewResult: report?.result || '',
+    });
   }
 };
