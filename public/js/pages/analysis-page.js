@@ -258,6 +258,37 @@ const AnalysisPage = {
       ? `${dateFrom} 〜 ${dateTo}`
       : (dateFrom || dateTo || '全期間');
 
+    // 統計手法カード
+    const methods = data.statistical_methods || [];
+    const reliabilityMeta = {
+      high:   { label: '信頼性：高',   bg: '#f0fdf4', color: '#16a34a', border: '#86efac' },
+      medium: { label: '信頼性：中',   bg: '#fffbeb', color: '#d97706', border: '#fcd34d' },
+      low:    { label: '信頼性：低',   bg: '#fef2f2', color: '#dc2626', border: '#fca5a5' },
+    };
+    const methodsHtml = methods.map((m, idx) => {
+      const rel = reliabilityMeta[m.reliability] || reliabilityMeta.medium;
+      return `
+        <div style="display:flex;gap:12px;align-items:flex-start;padding:12px 14px;
+                    background:#fafafa;border:1px solid var(--gray-200);border-radius:8px">
+          <span style="background:#6366f1;color:#fff;border-radius:6px;min-width:26px;height:26px;
+                       display:inline-flex;align-items:center;justify-content:center;
+                       font-size:11px;font-weight:700;flex-shrink:0">${idx + 1}</span>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+              <span style="font-size:13px;font-weight:700;color:#3730a3">${Utils.escHtml(m.name || '')}</span>
+              <span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;
+                           background:${rel.bg};color:${rel.color};border:1px solid ${rel.border}">${rel.label}</span>
+            </div>
+            <div style="font-size:12px;color:var(--gray-500);margin-bottom:3px">
+              <i class="fas fa-bullseye" style="margin-right:4px;color:#6366f1"></i>${Utils.escHtml(m.purpose || '')}
+            </div>
+            <div style="font-size:12px;color:var(--gray-700);line-height:1.6;font-weight:500">${Utils.escHtml(m.result || '')}</div>
+            ${m.note ? `<div style="font-size:11px;color:var(--gray-400);margin-top:3px">
+              <i class="fas fa-info-circle" style="margin-right:3px"></i>${Utils.escHtml(m.note)}</div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+
     // Findingsカード
     const findingsHtml = findings.map(f => {
       const colors = {
@@ -270,9 +301,12 @@ const AnalysisPage = {
         <div style="background:${c.bg};border:1px solid ${c.border};border-radius:10px;padding:14px 16px;display:flex;gap:12px;align-items:flex-start">
           <i class="fas ${c.icon}" style="color:${c.iconColor};font-size:18px;margin-top:2px;flex-shrink:0"></i>
           <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
               <span style="font-size:12px;font-weight:700;color:${c.labelColor}">${Utils.escHtml(f.label || '')}</span>
               ${f.value ? `<span style="font-size:18px;font-weight:800;color:${c.labelColor};line-height:1">${Utils.escHtml(String(f.value))}</span>` : ''}
+              ${f.method ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;
+                background:#ede9fe;color:#6d28d9;border:1px solid #c4b5fd;margin-left:auto">
+                <i class="fas fa-flask" style="margin-right:3px;font-size:9px"></i>${Utils.escHtml(f.method)}</span>` : ''}
             </div>
             <div style="font-size:12px;color:var(--gray-600);line-height:1.6">${Utils.escHtml(f.detail || '')}</div>
           </div>
@@ -336,12 +370,33 @@ const AnalysisPage = {
         </div>
       </div>
 
+      <!-- 使用した統計手法 -->
+      ${methods.length ? `
+      <div class="card" style="margin-bottom:16px;border-left:4px solid #6366f1">
+        <div class="card-header">
+          <div class="card-title">
+            <i class="fas fa-flask" style="margin-right:6px;color:#6366f1"></i>使用した統計手法
+            <span style="font-size:11px;font-weight:400;color:var(--gray-400);margin-left:8px">${methods.length}手法を適用</span>
+          </div>
+        </div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            ${methodsHtml}
+          </div>
+          <div style="margin-top:12px;padding:10px 12px;background:#f5f3ff;border-radius:6px;font-size:11px;color:#5b21b6;line-height:1.7">
+            <i class="fas fa-exclamation-circle" style="margin-right:4px"></i>
+            集計済みデータを使用した推定分析のため、個票データによる厳密な統計検定とは異なります。結果は傾向の把握と仮説形成にご活用ください。
+          </div>
+        </div>
+      </div>` : ''}
+
       <!-- 発見事項 -->
       ${findings.length ? `
       <div class="card" style="margin-bottom:16px">
         <div class="card-header">
           <div class="card-title">
             <i class="fas fa-search" style="margin-right:6px;color:#0ea5e9"></i>主な発見事項
+            <span style="font-size:11px;font-weight:400;color:var(--gray-400);margin-left:8px">使用手法を <i class="fas fa-flask" style="color:#6d28d9"></i> バッジで表示</span>
           </div>
         </div>
         <div class="card-body" style="padding:16px 20px">
@@ -414,7 +469,15 @@ const AnalysisPage = {
       '■ サマリー',
       d.summary || '',
       '',
-      ...(d.findings || []).map(f => `◆ ${f.label} ${f.value || ''}\n   ${f.detail || ''}`),
+      '■ 使用した統計手法',
+      ...(d.statistical_methods || []).map((m, i) =>
+        `${i + 1}. ${m.name}（信頼性:${m.reliability}）\n   目的: ${m.purpose}\n   結果: ${m.result}${m.note ? '\n   注: ' + m.note : ''}`
+      ),
+      '',
+      '■ 主な発見事項',
+      ...(d.findings || []).map(f =>
+        `◆ ${f.label} ${f.value || ''}${f.method ? ' [' + f.method + ']' : ''}\n   ${f.detail || ''}`
+      ),
       '',
       '■ 詳細解説',
       d.explanation || '',
