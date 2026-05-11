@@ -344,8 +344,8 @@ const AnalysisPage = {
                 <i class="fas fa-copy"></i> コピー
               </button>
               <button id="analysis-export-btn" class="btn btn-sm" style="font-size:11px;background:#16a34a;border-color:#16a34a;color:#fff"
-                onclick="AnalysisPage.exportSheet()">
-                <i class="fas fa-file-export"></i> スプレッドシートに書き出す
+                onclick="AnalysisPage.downloadCsv()">
+                <i class="fas fa-download"></i> CSVダウンロード
               </button>
             </div>
           </div>
@@ -494,62 +494,154 @@ const AnalysisPage = {
   },
 
   // ────────────────────────────────────────────────────────────
-  async exportSheet() {
-    if (!this.result) {
+  // CSV セル値エスケープ
+  _csvCell(v) {
+    const s = (v == null ? '' : String(v)).replace(/"/g, '""');
+    return `"${s}"`;
+  },
+
+  // CSV 文字列 → BOMつきUTF-8 Blob でダウンロード
+  _downloadBlob(csvStr, filename) {
+    const bom  = '\uFEFF';
+    const blob = new Blob([bom + csvStr], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
+
+  downloadCsv() {
+    const d = this.result;
+    if (!d) {
       Utils.notify('先に分析を実行してください', 'error');
       return;
     }
 
-    const btn = document.getElementById('analysis-export-btn');
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 書き出し中…';
-    }
+    const c    = v => this._csvCell(v);
+    const meta = d.meta || {};
+    const now  = new Date().toLocaleString('ja-JP');
+    const rows = [];
 
-    try {
-      const payload = {
-        result:  this.result,
-        rawData: this.result._rawData || null,
-      };
-      const resp = await API.analysis.exportSheet(payload);
+    // ── シート①: 分析結果サマリー ──────────────────────────
+    const summaryRows = [];
+    summaryRows.push(['分析結果サマリー'].map(c).join(','));
+    summaryRows.push([]);
+    summaryRows.push(['書き出し日時', now].map(c).join(','));
+    summaryRows.push(['分析期間',
+      `${meta.date_from || ''}〜${meta.date_to || ''}`].map(c).join(','));
+    summaryRows.push(['質問内容', d._rawData?.question || ''].map(c).join(','));
+    summaryRows.push(['分析タイトル', d.title || ''].map(c).join(','));
+    summaryRows.push(['総面接件数', meta.total_reports ?? ''].map(c).join(','));
+    summaryRows.push(['契約件数',   meta.contract_count ?? ''].map(c).join(','));
+    summaryRows.push(['CVR(%)',     meta.cvr ?? ''].map(c).join(','));
+    summaryRows.push([]);
+    summaryRows.push(['■ サマリー'].map(c).join(','));
+    summaryRows.push([d.summary || ''].map(c).join(','));
+    summaryRows.push([]);
+    summaryRows.push(['■ 詳細解説'].map(c).join(','));
+    summaryRows.push([d.explanation || ''].map(c).join(','));
+    summaryRows.push([]);
+    summaryRows.push(['■ データの注意点'].map(c).join(','));
+    summaryRows.push([d.caution || ''].map(c).join(','));
 
-      // 成功トースト + スプレッドシートへのリンク通知
-      Utils.notify('スプレッドシートに書き出しました', 'success');
+    // ── シート②: 使用した統計手法 ──────────────────────────
+    const methodRows = [];
+    methodRows.push([]);
+    methodRows.push(['■ 使用した統計手法'].map(c).join(','));
+    methodRows.push(['#', '手法名', '目的', '結果', '信頼性', '注記'].map(c).join(','));
+    (d.statistical_methods || []).forEach((m, i) => {
+      methodRows.push([
+        i + 1, m.name || '', m.purpose || '',
+        m.result || '', m.reliability || '', m.note || '',
+      ].map(c).join(','));
+    });
 
-      // 結果エリアにリンクバナーを表示
-      const banner = document.getElementById('analysis-export-banner');
-      if (banner) {
-        banner.innerHTML = `
-          <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;
-                      background:#f0fdf4;border:1px solid #86efac;border-radius:8px;margin-top:12px">
-            <i class="fas fa-check-circle" style="color:#16a34a;font-size:18px;flex-shrink:0"></i>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:700;color:#166534;margin-bottom:2px">
-                スプレッドシートに書き出しました
-              </div>
-              <div style="font-size:11px;color:#15803d">
-                「${Utils.escHtml(resp.summarySheet)}」シートに分析結果を追記
-                ／「${Utils.escHtml(resp.recordsSheet)}」シートに${resp.recordsWritten}件の使用データを追記
-              </div>
-            </div>
-            <a href="${Utils.escHtml(resp.spreadsheetUrl)}" target="_blank" rel="noopener"
-               style="flex-shrink:0;font-size:12px;font-weight:600;color:#0ea5e9;
-                      text-decoration:none;display:flex;align-items:center;gap:4px;
-                      padding:6px 12px;border:1px solid #0ea5e9;border-radius:6px;
-                      background:#fff;white-space:nowrap">
-              <i class="fas fa-external-link-alt"></i> シートを開く
-            </a>
-          </div>`;
-        banner.style.display = 'block';
-      }
+    // ── シート③: 発見事項 ───────────────────────────────────
+    const findingRows = [];
+    findingRows.push([]);
+    findingRows.push(['■ 主な発見事項'].map(c).join(','));
+    findingRows.push(['ラベル', '数値', '詳細', '評価', '使用手法'].map(c).join(','));
+    (d.findings || []).forEach(f => {
+      findingRows.push([
+        f.label || '', f.value || '', f.detail || '',
+        f.type  || '', f.method || '',
+      ].map(c).join(','));
+    });
 
-    } catch (e) {
-      Utils.notify('書き出しエラー: ' + e.message, 'error');
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fas fa-file-export"></i> スプレッドシートに書き出す';
-      }
+    // ── シート④: ネクストアクション ────────────────────────
+    const actionRows = [];
+    actionRows.push([]);
+    actionRows.push(['■ ネクストアクション'].map(c).join(','));
+    actionRows.push(['#', '内容'].map(c).join(','));
+    (d.next_actions || []).forEach((a, i) => {
+      actionRows.push([i + 1, a].map(c).join(','));
+    });
+
+    // ── シート⑤: 使用した個別レコード ──────────────────────
+    const reports  = d._rawData?.reports || [];
+    const recRows  = [];
+    recRows.push([]);
+    recRows.push(['■ 分析に使用した個別レコード'].map(c).join(','));
+    recRows.push([
+      '面接日', '担当者', '応募者名', '性別', '広告媒体',
+      '面接内容', '結果', 'STAY回数', 'NO回数',
+      '支払方法', '権利', '入会理由', '辞退理由', '備考',
+    ].map(c).join(','));
+    reports.forEach(r => {
+      recRows.push([
+        r.interview_date || r.created_at?.slice(0, 10) || '',
+        r.interviewer_name    || '',
+        r.applicant_full_name || '',
+        r._gender     || '',
+        r._ad_source  || '',
+        r.interview_content   || '',
+        r.result              || '',
+        r.stay_count          ?? '',
+        r.no_count            ?? '',
+        r.payment_method      || '',
+        r.character_rights    || '',
+        r.join_reasons        || '',
+        r.decline_reasons     || '',
+        r.details             || '',
+      ].map(c).join(','));
+    });
+
+    // 全セクションを結合して1つのCSVに
+    const allRows = [
+      ...summaryRows,
+      ...methodRows,
+      ...findingRows,
+      ...actionRows,
+      ...recRows,
+    ];
+    const csvStr = allRows.join('\n');
+
+    // ファイル名: analysis_YYYYMMDD_HHMMSS.csv
+    const ts = new Date().toLocaleString('ja-JP', { hour12: false })
+      .replace(/[/:\s]/g, '').replace(',', '_');
+    this._downloadBlob(csvStr, `analysis_${ts}.csv`);
+
+    Utils.notify('CSVをダウンロードしました', 'success');
+
+    // バナー表示
+    const banner = document.getElementById('analysis-export-banner');
+    if (banner) {
+      banner.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;
+                    background:#f0fdf4;border:1px solid #86efac;border-radius:8px;margin-top:12px">
+          <i class="fas fa-check-circle" style="color:#16a34a;font-size:18px;flex-shrink:0"></i>
+          <div style="font-size:13px;font-weight:600;color:#166534">
+            CSVをダウンロードしました
+            <span style="font-size:11px;font-weight:400;color:#15803d;margin-left:8px">
+              分析結果・統計手法・発見事項・使用レコード ${reports.length}件を含む
+            </span>
+          </div>
+        </div>`;
+      banner.style.display = 'block';
     }
   },
 };
