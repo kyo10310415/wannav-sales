@@ -23,7 +23,7 @@ const SukuukunModal = {
 
     // ユーザー一覧を取得（キャッシュ済みなら再取得しない）
     if (!this._users.length) {
-      try { this._users = await API.users.list(); } catch (e) { this._users = []; }
+      try { this._users = await API.users.sales(); } catch (e) { this._users = []; }
     }
 
     this._render();

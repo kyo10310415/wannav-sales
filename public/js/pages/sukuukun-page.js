@@ -337,7 +337,7 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
   async mount() {
     // ユーザー一覧を取得（担当者DD用）
     try {
-      this.users = await API.users.list();
+      this.users = await API.users.sales();
     } catch (e) {
       this.users = [];
     }
