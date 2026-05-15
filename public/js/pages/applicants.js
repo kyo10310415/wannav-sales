@@ -391,6 +391,7 @@ const ApplicantsPage = {
   },
 
   // 応募者一覧で非表示にするスプレッドシートカラム（機能5）
+  // ※ キーはnormalizeHeader()と同じ変換済み文字列（改行・全角スペース除去）
   _hiddenHeaders: new Set([
     '一次面接担当', '二次面接担当', '一次面接実施',
     '飛び', 'CV', 'リマインド送付時予約有無', '飛びリマインド送付'
@@ -442,8 +443,10 @@ const ApplicantsPage = {
     const allHeaders = this.visibleHeaders;
     const visibleIdxMap = []; // allHeaders上のインデックス → 表示する列のインデックスリスト
     const headers = [];
+    // 改行・全角スペース・前後空白を除去して比較
+    const normalizeHeader = h => (h || '').replace(/[\r\n\u3000\s]+/g, '').trim();
     allHeaders.forEach((h, i) => {
-      if (!this._hiddenHeaders.has(h ? h.trim() : '')) {
+      if (!this._hiddenHeaders.has(normalizeHeader(h))) {
         visibleIdxMap.push(i);
         headers.push(h);
       }
