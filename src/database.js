@@ -184,6 +184,21 @@ function initializeDatabase() {
     console.log('Migration: applicant_interview_dates.source column added');
   }
 
+  // Migration: 既存すくう君履歴にapplicant_keyを紐付け（機能4）
+  // applicant_key が NULL のレコードに applicant_name をセット
+  const evalKeyFixed = db.prepare(
+    "UPDATE sukuukun_evaluations SET applicant_key = applicant_name WHERE applicant_key IS NULL AND applicant_name IS NOT NULL"
+  ).run();
+  if (evalKeyFixed.changes > 0) {
+    console.log(`Migration: sukuukun_evaluations.applicant_key backfilled for ${evalKeyFixed.changes} rows`);
+  }
+  const speechKeyFixed = db.prepare(
+    "UPDATE sukuukun_speech_analyses SET applicant_key = applicant_name WHERE applicant_key IS NULL AND applicant_name IS NOT NULL"
+  ).run();
+  if (speechKeyFixed.changes > 0) {
+    console.log(`Migration: sukuukun_speech_analyses.applicant_key backfilled for ${speechKeyFixed.changes} rows`);
+  }
+
   // すくう君発話比率分析履歴テーブル
   db.exec(`
     CREATE TABLE IF NOT EXISTS sukuukun_speech_analyses (

@@ -100,6 +100,17 @@ router.get('/summary', authenticateToken, (req, res) => {
     SELECT COUNT(*) as count ${contractFilterSQL}
   `).get(...params);
 
+  // プラン別契約数（機能6）
+  const planBreakdown = db.prepare(`
+    SELECT
+      COALESCE(NULLIF(TRIM(contract_plan), ''), '未記入') AS plan,
+      COUNT(*) AS count
+    FROM ${DEDUP_SUBQUERY}
+    ${dedupDateFilter ? dedupDateFilter + ' AND' : 'WHERE'} ${CONTRACT_CONDITION}
+    GROUP BY plan
+    ORDER BY count DESC
+  `).all(...params);
+
   // 面接実施数: スプレッドシートの「面接実施」=TRUE件数を優先
   // 未設定（0）の場合は営業報告の件数（重複除外）をフォールバックとして使用
   const interviewFromSheet = parseInt(interview_count) || 0;
@@ -133,6 +144,7 @@ router.get('/summary', authenticateToken, (req, res) => {
     applicant_count: appCount,
     cvr_interview: cvrInterview,
     cvr_applicant: cvrApplicant,
+    plan_breakdown: planBreakdown,
   });
 });
 

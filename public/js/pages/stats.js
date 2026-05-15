@@ -294,6 +294,9 @@ const StatsPage = {
           </div>
 
         </div>
+
+        <!-- 機能6: 契約プラン別 CVR テーブル -->
+        ${this._renderPlanBreakdown(data)}
       `;
     } catch (err) {
       cvrCards.innerHTML = `
@@ -578,5 +581,86 @@ const StatsPage = {
 
   formatWeekLabel(period) {
     return Utils.weekRangeLabel(period);
+  },
+
+  // ============================================================
+  // 機能6: 契約プラン別 CVR テーブルを生成
+  // data = API.stats.summary() のレスポンス
+  // ============================================================
+  _renderPlanBreakdown(data) {
+    const plans = data.plan_breakdown || [];
+    if (!plans.length) return '';
+
+    const totalInterviews = data.total_interviews || 0;
+
+    const rows = plans.map(p => {
+      const cvr = totalInterviews > 0
+        ? ((p.count / totalInterviews) * 100).toFixed(1)
+        : '0.0';
+      const barWidth = data.total_contracts > 0
+        ? Math.round((p.count / data.total_contracts) * 100)
+        : 0;
+      const isUnfilled = p.plan === '未記入';
+      return `
+        <tr>
+          <td style="padding:9px 14px;font-size:12px;font-weight:600;white-space:nowrap;color:${isUnfilled ? 'var(--gray-400)' : 'var(--gray-700)'}">
+            ${isUnfilled ? '<i class="fas fa-minus-circle" style="margin-right:4px;color:var(--gray-300)"></i>' : '<i class="fas fa-tag" style="margin-right:4px;color:#7c3aed;font-size:10px"></i>'}
+            ${Utils.escHtml(p.plan)}
+          </td>
+          <td style="padding:9px 12px;text-align:center;font-weight:700;font-size:15px;color:#16a34a">${p.count}</td>
+          <td style="padding:9px 12px;text-align:center;font-size:13px;font-weight:600;color:var(--primary)">${cvr}%</td>
+          <td style="padding:9px 14px;min-width:120px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="flex:1;background:var(--gray-100);border-radius:4px;height:8px;overflow:hidden">
+                <div style="background:#7c3aed;height:100%;width:${barWidth}%;border-radius:4px;transition:width 0.3s"></div>
+              </div>
+              <span style="font-size:10px;color:var(--gray-400);white-space:nowrap">${barWidth}%</span>
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
+
+    // 全体行
+    const totalCvr = totalInterviews > 0
+      ? ((data.total_contracts / totalInterviews) * 100).toFixed(1)
+      : '0.0';
+
+    return `
+      <div class="card" style="margin-top:20px">
+        <div class="card-header" style="background:linear-gradient(135deg,#faf5ff,#f5f3ff)">
+          <div class="card-title">
+            <i class="fas fa-tags" style="margin-right:8px;color:#7c3aed"></i>
+            契約プラン別 CVR（面接実施数比）
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse">
+              <thead>
+                <tr style="background:var(--gray-50)">
+                  <th style="padding:9px 14px;font-size:11px;text-align:left;border-bottom:2px solid var(--gray-200)">契約プラン</th>
+                  <th style="padding:9px 12px;font-size:11px;text-align:center;border-bottom:2px solid var(--gray-200);color:#16a34a">契約数</th>
+                  <th style="padding:9px 12px;font-size:11px;text-align:center;border-bottom:2px solid var(--gray-200);color:var(--primary)">CVR（面接比）</th>
+                  <th style="padding:9px 14px;font-size:11px;text-align:left;border-bottom:2px solid var(--gray-200);min-width:150px">契約内の割合</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+                <!-- 全体行 -->
+                <tr style="background:#f0fdf4;border-top:2px solid #bbf7d0">
+                  <td style="padding:10px 14px;font-size:13px;font-weight:700;color:#166534">
+                    <i class="fas fa-sigma" style="margin-right:5px"></i>合計
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;font-weight:800;font-size:16px;color:#16a34a">${data.total_contracts}</td>
+                  <td style="padding:10px 12px;text-align:center;font-weight:700;font-size:14px;color:var(--primary)">${totalCvr}%</td>
+                  <td style="padding:10px 14px;font-size:11px;color:var(--gray-400)">
+                    面接実施 ${totalInterviews}件 に対する契約数
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
   }
 };

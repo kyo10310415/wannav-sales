@@ -390,6 +390,12 @@ const ApplicantsPage = {
       : '<i class="fas fa-sort-down" style="color:var(--primary);font-size:10px;margin-left:3px"></i>';
   },
 
+  // 応募者一覧で非表示にするスプレッドシートカラム（機能5）
+  _hiddenHeaders: new Set([
+    '一次面接担当', '二次面接担当', '一次面接実施',
+    '飛び', 'CV', 'リマインド送付時予約有無', '飛びリマインド送付'
+  ]),
+
   _colWidth(headerName) {
     const map = {
       '応募日':        '82px',
@@ -407,6 +413,11 @@ const ApplicantsPage = {
       'CV':            '38px',
       '広告媒体':      '70px',
       'ブラックリスト':'76px',
+      // 追加列（営業報告から）
+      '面接担当者':    '72px',
+      '面接内容':      '90px',
+      '結果':          '64px',
+      '契約プラン':    '88px',
     };
     return map[headerName ? headerName.trim() : ''] || '80px';
   },
@@ -427,17 +438,31 @@ const ApplicantsPage = {
       return;
     }
 
-    const headers = this.visibleHeaders;
+    // 機能5: 非表示カラムを除外したheadersとインデックスマップを作成
+    const allHeaders = this.visibleHeaders;
+    const visibleIdxMap = []; // allHeaders上のインデックス → 表示する列のインデックスリスト
+    const headers = [];
+    allHeaders.forEach((h, i) => {
+      if (!this._hiddenHeaders.has(h ? h.trim() : '')) {
+        visibleIdxMap.push(i);
+        headers.push(h);
+      }
+    });
+
     const dateColIdx = (() => {
       const i = headers.findIndex(h => h && h.trim() === '応募日');
       return i !== -1 ? i : headers.findIndex(h => h && h.trim() === 'タイムスタンプ');
     })();
+
+    // 追加列（営業報告から）
+    const reportExtraCols = ['面接担当者', '面接内容', '結果', '契約プラン'];
 
     const colDefs = [
       `<col style="width:110px;min-width:90px">`,  // 氏名
       `<col style="width:108px;min-width:108px">`,  // 面接日
     ];
     headers.forEach(h => colDefs.push(`<col style="width:${this._colWidth(h)}">`) );
+    reportExtraCols.forEach(h => colDefs.push(`<col style="width:${this._colWidth(h)};">`));
     colDefs.push(`<col style="width:80px;min-width:72px">`); // 営業報告
 
     const headerCells = [
@@ -458,6 +483,14 @@ const ApplicantsPage = {
         </th>`
       );
     });
+    // 営業報告由来の追加列ヘッダー
+    reportExtraCols.forEach(h => {
+      headerCells.push(
+        `<th style="font-size:11px;padding:6px 4px;text-align:center;background:#fefce8;color:#92400e;white-space:nowrap">
+          ${Utils.escHtml(h)}
+        </th>`
+      );
+    });
     headerCells.push(`<th style="text-align:center;font-size:11px;padding:6px 4px">営業報告</th>`);
 
     const rowsHtml = items.map(a => {
@@ -473,13 +506,31 @@ const ApplicantsPage = {
       const dateVal   = this.interviewDates[appKey] || '';
       const isSaving  = !!this._savingDate[appKey];
 
-      const dataCells = a.visible_data.map((col, i) => {
+      // 機能5: 非表示列を除外したdataCells
+      const dataCells = visibleIdxMap.map((origIdx, i) => {
+        const col = a.visible_data[origIdx];
         const isDateCol = i === dateColIdx;
-        const val = col.value || '-';
+        const val = col ? (col.value || '-') : '-';
         const cellStyle = isDateCol
           ? 'font-size:11px;padding:5px 4px;background:#eff6ff;font-weight:600;white-space:nowrap;text-align:center'
           : 'font-size:11px;padding:5px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0;text-align:center';
-        return `<td style="${cellStyle}" title="${Utils.escHtml(col.value)}">${Utils.escHtml(val)}</td>`;
+        return `<td style="${cellStyle}" title="${Utils.escHtml(col ? col.value : '')}">${Utils.escHtml(val)}</td>`;
+      });
+
+      // 機能5: 営業報告由来の追加列セル
+      const extraVals = [
+        report ? (report.interviewer_name  || '-') : '-',
+        report ? (report.interview_content || '-') : '-',
+        report ? (report.result            || '-') : '-',
+        report ? (report.contract_plan     || '-') : '-',
+      ];
+      const reportExtraCells = extraVals.map((val, i) => {
+        const isResultCol = i === 2;
+        const isCt = isResultCol && report && (report.result?.includes('契約') || report.result === '契約');
+        const style = isCt
+          ? 'font-size:11px;padding:5px 4px;text-align:center;background:#dcfce7;color:#16a34a;font-weight:700;white-space:nowrap'
+          : 'font-size:11px;padding:5px 4px;text-align:center;background:#fefce8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0';
+        return `<td style="${style}" title="${Utils.escHtml(val)}">${Utils.escHtml(val)}</td>`;
       });
 
       const reportCell = `<div style="display:flex;flex-direction:column;align-items:center;gap:3px">
@@ -543,6 +594,7 @@ const ApplicantsPage = {
             ${interviewDateCell}
           </td>
           ${dataCells.join('')}
+          ${reportExtraCells.join('')}
           <td style="text-align:center;padding:4px 2px;white-space:nowrap">${reportCell}</td>
         </tr>`;
     }).join('');
