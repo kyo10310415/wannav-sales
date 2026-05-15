@@ -164,6 +164,25 @@ function initializeDatabase() {
     db.exec('ALTER TABLE sukuukun_evaluations ADD COLUMN interview_result TEXT');
     console.log('Migration: sukuukun_evaluations.interview_result column added');
   }
+  // Migration: sukuukun_evaluations に applicant_key カラムを追加（機能1）
+  if (!evalCols.includes('applicant_key')) {
+    db.exec('ALTER TABLE sukuukun_evaluations ADD COLUMN applicant_key TEXT');
+    console.log('Migration: sukuukun_evaluations.applicant_key column added');
+  }
+
+  // Migration: sukuukun_speech_analyses に applicant_key カラムを追加（機能1）
+  const speechCols = db.prepare('PRAGMA table_info(sukuukun_speech_analyses)').all().map(c => c.name);
+  if (!speechCols.includes('applicant_key')) {
+    db.exec('ALTER TABLE sukuukun_speech_analyses ADD COLUMN applicant_key TEXT');
+    console.log('Migration: sukuukun_speech_analyses.applicant_key column added');
+  }
+
+  // Migration: applicant_interview_dates に source カラムを追加（機能3）
+  const dateCols = db.prepare('PRAGMA table_info(applicant_interview_dates)').all().map(c => c.name);
+  if (!dateCols.includes('source')) {
+    db.exec("ALTER TABLE applicant_interview_dates ADD COLUMN source TEXT DEFAULT 'manual'");
+    console.log('Migration: applicant_interview_dates.source column added');
+  }
 
   // すくう君発話比率分析履歴テーブル
   db.exec(`

@@ -31,11 +31,12 @@ router.put('/:key', authenticateToken, (req, res) => {
   }
 
   db.prepare(`
-    INSERT INTO applicant_interview_dates (applicant_key, interview_date, updated_at)
-    VALUES (?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO applicant_interview_dates (applicant_key, interview_date, source, updated_at)
+    VALUES (?, ?, 'manual', CURRENT_TIMESTAMP)
     ON CONFLICT(applicant_key) DO UPDATE SET
       interview_date = excluded.interview_date,
-      updated_at = CURRENT_TIMESTAMP
+      source         = 'manual',
+      updated_at     = CURRENT_TIMESTAMP
   `).run(applicantKey, interview_date || null);
 
   res.json({ ok: true, applicant_key: applicantKey, interview_date: interview_date || null });

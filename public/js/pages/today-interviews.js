@@ -307,6 +307,11 @@ const TodayInterviewsPage = {
               onclick="TodayInterviewsPage.openSukuukun('${safeId}')">
               🤖 すくう君
             </button>
+            <button class="btn btn-xs" title="すくう君・発話比率の過去結果を確認"
+              style="font-size:10px;padding:2px 8px;background:#f0fdf4;border:1px solid #4ade80;color:#166534;border-radius:4px;cursor:pointer;margin-top:1px"
+              onclick="TodayInterviewsPage.viewSukuukunHistory('${safeId}')">
+              📋 過去結果
+            </button>
           </div>`
         : `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
             <button class="btn btn-primary btn-xs" style="font-size:10px;padding:3px 8px"
@@ -316,6 +321,11 @@ const TodayInterviewsPage = {
             <button class="btn btn-xs" style="font-size:10px;padding:2px 8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:4px;cursor:pointer;margin-top:1px"
               onclick="TodayInterviewsPage.openSukuukun('${safeId}')">
               🤖 すくう君
+            </button>
+            <button class="btn btn-xs" title="すくう君・発話比率の過去結果を確認"
+              style="font-size:10px;padding:2px 8px;background:#f0fdf4;border:1px solid #4ade80;color:#166534;border-radius:4px;cursor:pointer;margin-top:1px"
+              onclick="TodayInterviewsPage.viewSukuukunHistory('${safeId}')">
+              📋 過去結果
             </button>
           </div>`;
 
@@ -434,9 +444,24 @@ const TodayInterviewsPage = {
     if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
     // 対応する報告から結果を取得
     const report = this.getReportForApplicant(a);
+    const appKey = this._applicantKey(a);
     SukuukunModal.open({
-      applicantName: a.full_name || '',
+      applicantName:   a.full_name || '',
+      applicantKey:    appKey,
       interviewResult: report?.result || '',
     });
+  },
+
+  // ---------- すくう君 過去結果確認 ----------
+  async viewSukuukunHistory(safeId) {
+    const a = this._cache?.[safeId];
+    if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
+    const appKey = this._applicantKey(a);
+    try {
+      const data = await API.sukuukun.byApplicant(appKey);
+      SukuukunHistoryModal.open(a.full_name || appKey, data);
+    } catch (e) {
+      Utils.notify('履歴の取得に失敗しました: ' + e.message, 'error');
+    }
   }
 };

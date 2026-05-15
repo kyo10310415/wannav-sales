@@ -504,6 +504,11 @@ const ApplicantsPage = {
             onclick="ApplicantsPage.openSukuukun('${safeId}')">
             🤖 すくう君
           </button>
+          <button class="btn btn-xs" title="すくう君・発話比率の過去結果を確認"
+            style="font-size:10px;padding:2px 5px;background:#f0fdf4;border:1px solid #4ade80;color:#166534;border-radius:4px;white-space:nowrap;cursor:pointer"
+            onclick="ApplicantsPage.viewSukuukunHistory('${safeId}')">
+            📋 過去結果
+          </button>
         </div>`;
 
       // 面接日セル: 常に入力可能
@@ -671,9 +676,24 @@ const ApplicantsPage = {
     const a = this._cache?.[safeId];
     if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
     const report = this.getReportForApplicant(a);
+    const appKey = this._applicantKey(a);
     SukuukunModal.open({
       applicantName:   a.full_name || '',
+      applicantKey:    appKey,
       interviewResult: report?.result || '',
     });
+  },
+
+  // ---------- すくう君 過去結果確認 ----------
+  async viewSukuukunHistory(safeId) {
+    const a = this._cache?.[safeId];
+    if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
+    const appKey = this._applicantKey(a);
+    try {
+      const data = await API.sukuukun.byApplicant(appKey);
+      SukuukunHistoryModal.open(a.full_name || appKey, data);
+    } catch (e) {
+      Utils.notify('履歴の取得に失敗しました: ' + e.message, 'error');
+    }
   }
 };

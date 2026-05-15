@@ -135,7 +135,7 @@ const App = {
         id: 'nav-sukuukun',
         page: 'sukuukun',
         icon: 'fa-robot',
-        label: 'すくう君',
+        label: 'すくう君管理',
         show: true,
       },
       {
