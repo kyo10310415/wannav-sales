@@ -358,10 +358,11 @@ router.post('/sync', authenticateToken, async (req, res) => {
     ).all().map(r => r.applicant_key);
 
     const upsert = db.prepare(`
-      INSERT INTO applicant_interview_dates (applicant_key, interview_date, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO applicant_interview_dates (applicant_key, interview_date, source, updated_at)
+      VALUES (?, ?, 'calendar', CURRENT_TIMESTAMP)
       ON CONFLICT(applicant_key) DO UPDATE SET
         interview_date = excluded.interview_date,
+        source         = 'calendar',
         updated_at     = CURRENT_TIMESTAMP
     `);
 
@@ -427,11 +428,44 @@ router.post('/sync', authenticateToken, async (req, res) => {
     }
 
     const matchedCount = matchResults.filter(r => r.matched).length;
+
+    // ============================================================
+    // カレンダーから消えたイベントの面接日を空白化
+    // source='calendar' のレコードのうち、今回のカレンダー取得で
+    // 照合された applicant_key に含まれないものは NULL にリセット
+    // ============================================================
+    const matchedKeys = new Set(
+      matchResults.filter(r => r.matched).map(r => r.applicantKey)
+    );
+
+    // DB上で source='calendar' のレコードを全取得
+    const calendarSourcedRows = db.prepare(`
+      SELECT applicant_key, interview_date
+      FROM applicant_interview_dates
+      WHERE source = 'calendar'
+    `).all();
+
+    const clearedKeys = [];
+    for (const row of calendarSourcedRows) {
+      if (!matchedKeys.has(row.applicant_key)) {
+        // カレンダーに対応するイベントが存在しない → 空白化
+        db.prepare(`
+          UPDATE applicant_interview_dates
+          SET interview_date = NULL,
+              updated_at     = CURRENT_TIMESTAMP
+          WHERE applicant_key = ? AND source = 'calendar'
+        `).run(row.applicant_key);
+        clearedKeys.push(row.applicant_key);
+      }
+    }
+
     res.json({
       ok: true,
-      message: `${allEvents.length}件のイベントを取得、${matchedCount}件を照合しました`,
+      message: `${allEvents.length}件のイベントを取得、${matchedCount}件を照合しました` +
+        (clearedKeys.length > 0 ? `（キャンセル検出: ${clearedKeys.length}件を空白化）` : ''),
       totalEvents: allEvents.length,
       matched: matchedCount,
+      cleared: clearedKeys.length,
       results: matchResults,
     });
 

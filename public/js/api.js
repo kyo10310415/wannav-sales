@@ -161,6 +161,8 @@ const API = {
       },
       get:   (id) => API.get(`/sukuukun/history/${id}`),
     },
+    // 応募者別の採点・発話比率履歴を取得
+    byApplicant: (key) => API.get(`/sukuukun/by-applicant/${encodeURIComponent(key)}`),
   },
 
   // Stats

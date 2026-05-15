@@ -1,20 +1,24 @@
 // すくう君モーダル — 営業トーク文字起こし採点・評価（新版機能ベース）
-// open(opts) opts: { applicantName?, interviewResult? }
+// open(opts) opts: { applicantName?, applicantKey?, interviewResult? }
 // ※ SukuukunPage と同等の機能を持つモーダル形式の実装
 const SukuukunModal = {
   _opts: {},
   _users: [],   // ユーザー一覧キャッシュ
   _sources: [], // ソースキャッシュ
 
-  // opts: { applicantName?: string, interviewResult?: string }
+  // opts: { applicantName?: string, applicantKey?: string, interviewResult?: string }
   async open(opts = {}) {
     // applicantオブジェクトが直接渡された場合（applicants.jsの旧呼び出し互換）
     if (opts && typeof opts === 'object' && opts.full_name !== undefined) {
       const report = typeof ApplicantsPage !== 'undefined'
         ? ApplicantsPage.getReportForApplicant?.(opts) || null
         : null;
+      const key = (opts.email && opts.email.trim())
+        ? opts.email.trim()
+        : (opts.full_name || '').trim();
       opts = {
-        applicantName:  opts.full_name || '',
+        applicantName:   opts.full_name || '',
+        applicantKey:    key || '',
         interviewResult: report?.result || '',
       };
     }
@@ -44,6 +48,7 @@ const SukuukunModal = {
   _render() {
     const opts           = this._opts;
     const applicantName  = opts.applicantName  || '';
+    const applicantKey   = opts.applicantKey   || '';
     const interviewResult = opts.interviewResult || '';
 
     const userOptions = this._users.map(u =>
@@ -78,6 +83,8 @@ const SukuukunModal = {
 
           <!-- ① 入力エリア -->
           <div id="skm-input-area" style="padding:16px 20px">
+            <!-- applicantKey を保持する hidden input -->
+            <input type="hidden" id="skm-applicant-key" value="${Utils.escHtml(applicantKey)}">
 
             <!-- 3列：応募者・担当者・結果 -->
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px">
@@ -238,13 +245,15 @@ const SukuukunModal = {
   _getInputValues() {
     const transcript     = (document.getElementById('skm-transcript')?.value || '').trim();
     const applicantName  = (document.getElementById('skm-applicant-name')?.value || '').trim();
+    // applicantKey は hidden input から取得（open()時に埋め込み済み）
+    const applicantKey   = (document.getElementById('skm-applicant-key')?.value || '').trim();
     const interviewerSel = document.getElementById('skm-interviewer');
     const interviewerId  = interviewerSel?.value ? Number(interviewerSel.value) : null;
     const interviewerName = interviewerId
       ? (interviewerSel.options[interviewerSel.selectedIndex]?.dataset?.name || '')
       : '';
     const interviewResult = document.getElementById('skm-interview-result')?.value || '';
-    return { transcript, applicantName, interviewerId, interviewerName, interviewResult };
+    return { transcript, applicantName, applicantKey, interviewerId, interviewerName, interviewResult };
   },
 
   // ── ローディング表示 / 非表示 ──
@@ -279,7 +288,7 @@ const SukuukunModal = {
   // 採点（評価）
   // ══════════════════════════════════════════════════════════════
   async _submitEvaluate() {
-    const { transcript, applicantName, interviewerId, interviewerName, interviewResult } = this._getInputValues();
+    const { transcript, applicantName, applicantKey, interviewerId, interviewerName, interviewResult } = this._getInputValues();
     if (transcript.length < 50) {
       Utils.notify('文字起こしテキストが短すぎます（50文字以上必要）', 'error');
       return;
@@ -291,6 +300,7 @@ const SukuukunModal = {
       const data = await API.sukuukun.evaluate({
         transcript,
         applicantName:   applicantName   || undefined,
+        applicantKey:    applicantKey    || undefined,
         interviewerId:   interviewerId   || undefined,
         interviewerName: interviewerName || undefined,
         interviewResult: interviewResult || undefined,
@@ -460,7 +470,7 @@ const SukuukunModal = {
   // 発話比率分析（SukuukunPage と同等ロジック）
   // ══════════════════════════════════════════════════════════════
   async _submitSpeech() {
-    const { transcript, interviewerId, interviewerName, applicantName } = this._getInputValues();
+    const { transcript, interviewerId, interviewerName, applicantName, applicantKey } = this._getInputValues();
     if (transcript.length < 50) {
       Utils.notify('文字起こしテキストが短すぎます（50文字以上）', 'error');
       return;
@@ -479,6 +489,7 @@ const SukuukunModal = {
         interviewer_id:   interviewerId   || undefined,
         interviewer_name: interviewerName || undefined,
         applicant_name:   applicantName   || undefined,
+        applicant_key:    applicantKey    || undefined,
         analyzed_at:      analyzedAt,
       });
 

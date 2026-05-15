@@ -283,9 +283,9 @@ router.delete('/sources/:id', authenticateToken, (req, res) => {
 // ============================================================
 
 // POST /api/sukuukun/evaluate
-// body: { transcript, applicantName, interviewerId, interviewerName, interviewResult }
+// body: { transcript, applicantName, applicantKey, interviewerId, interviewerName, interviewResult }
 router.post('/evaluate', authenticateToken, async (req, res) => {
-  const { transcript, applicantName, interviewerId, interviewerName, interviewResult } = req.body;
+  const { transcript, applicantName, applicantKey, interviewerId, interviewerName, interviewResult } = req.body;
 
   if (!transcript || transcript.trim().length < 50) {
     return res.status(400).json({ error: '文字起こしテキストが短すぎます（50文字以上必要）' });
@@ -342,12 +342,13 @@ router.post('/evaluate', authenticateToken, async (req, res) => {
       const user = req.user;
       db.prepare(`
         INSERT INTO sukuukun_evaluations
-          (applicant_name, evaluator_id, evaluator_name,
+          (applicant_name, applicant_key, evaluator_id, evaluator_name,
            interviewer_id, interviewer_name, interview_result,
            transcript_length, total_score, result_json, source_snapshot)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         applicantName || null,
+        applicantKey  || null,
         user?.id || null,
         user?.name || null,
         interviewerId || null,
@@ -412,7 +413,6 @@ router.get('/history/:id', authenticateToken, (req, res) => {
 // ============================================================
 router.post('/analyze-speech', authenticateToken, async (req, res) => {
   const { transcript, metrics } = req.body;
-
   if (!transcript || transcript.trim().length < 50) {
     return res.status(400).json({ error: '文字起こしテキストが短すぎます（50文字以上必要）' });
   }
@@ -475,7 +475,7 @@ router.post('/analyze-speech', authenticateToken, async (req, res) => {
     }
 
     // ── 結果をDBに保存 ──────────────────────────────────────────
-    const { interviewer_id, interviewer_name, applicant_name, analyzed_at } = req.body;
+    const { interviewer_id, interviewer_name, applicant_name, applicant_key, analyzed_at } = req.body;
     const sr = metrics?.speech_ratio || {};
     const mo = metrics?.monologue    || {};
     const ae = metrics?.applicant_engagement || {};
@@ -485,18 +485,19 @@ router.post('/analyze-speech', authenticateToken, async (req, res) => {
     try {
       db.prepare(`
         INSERT INTO sukuukun_speech_analyses (
-          interviewer_id, interviewer_name, applicant_name, analyzed_at,
+          interviewer_id, interviewer_name, applicant_name, applicant_key, analyzed_at,
           sales_ratio, applicant_ratio, sales_chars, applicant_chars,
           max_monologue_sec, mono_3min_count, mono_5min_count,
           applicant_turn_count, silence_over_15s,
           sales_interrupts, applicant_interrupts,
           emotion_confusion, emotion_stress, emotion_positive,
           advice, actions, transcript_length
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         interviewer_id   || null,
         interviewer_name || null,
         applicant_name   || null,
+        applicant_key    || null,
         analyzed_at      || new Date().toISOString(),
         sr.sales_ratio     ?? null,
         sr.applicant_ratio ?? null,
@@ -635,5 +636,54 @@ router.get('/speech-stats/months', authenticateToken, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ============================================================
+// 応募者別すくう君結果取得
+// GET /api/sukuukun/by-applicant/:key
+// :key は encodeURIComponent された applicant_key
+// 採点履歴（最新10件）＋発話比率履歴（最新10件）を返す
+// ============================================================
+router.get('/by-applicant/:key', authenticateToken, (req, res) => {
+  const applicantKey = decodeURIComponent(req.params.key);
+  if (!applicantKey) return res.status(400).json({ error: '応募者キーが必要です' });
+
+  // 採点履歴
+  const evaluations = db.prepare(`
+    SELECT id, applicant_name, evaluator_name,
+           interviewer_id, interviewer_name, interview_result,
+           transcript_length, total_score, created_at
+    FROM sukuukun_evaluations
+    WHERE applicant_key = ?
+    ORDER BY created_at DESC
+    LIMIT 10
+  `).all(applicantKey);
+
+  // 発話比率履歴
+  const speeches = db.prepare(`
+    SELECT id, interviewer_name, applicant_name, analyzed_at,
+           sales_ratio, applicant_ratio,
+           max_monologue_sec, mono_3min_count, mono_5min_count,
+           applicant_turn_count, silence_over_15s,
+           sales_interrupts, applicant_interrupts,
+           emotion_confusion, emotion_stress, emotion_positive,
+           advice, actions, transcript_length, created_at
+    FROM sukuukun_speech_analyses
+    WHERE applicant_key = ?
+    ORDER BY created_at DESC
+    LIMIT 10
+  `).all(applicantKey);
+
+  // actions を JSON → 配列にパース
+  speeches.forEach(r => {
+    try { r.actions = JSON.parse(r.actions); } catch (e) { r.actions = []; }
+  });
+
+  res.json({ applicant_key: applicantKey, evaluations, speeches });
+});
+
+// ============================================================
+// 採点履歴詳細（result_json付き）
+// GET /api/sukuukun/history/:id  — 既存エンドポイント流用可
+// ============================================================
 
 module.exports = router;
