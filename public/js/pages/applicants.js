@@ -419,6 +419,8 @@ const ApplicantsPage = {
       '面接内容':      '90px',
       '結果':          '64px',
       '契約プラン':    '88px',
+      '学籍番号':      '72px',
+      'Notion':        '72px',
     };
     return map[headerName ? headerName.trim() : ''] || '80px';
   },
@@ -458,7 +460,7 @@ const ApplicantsPage = {
     })();
 
     // 追加列（営業報告から）
-    const reportExtraCols = ['面接担当者', '面接内容', '結果', '契約プラン'];
+    const reportExtraCols = ['面接担当者', '面接内容', '結果', '契約プラン', '学籍番号', 'Notion'];
 
     const colDefs = [
       `<col style="width:110px;min-width:90px">`,  // 氏名
@@ -521,11 +523,13 @@ const ApplicantsPage = {
       });
 
       // 機能5: 営業報告由来の追加列セル
+      const notionUrl = report ? (report.notion_url || '') : '';
       const extraVals = [
         report ? (report.interviewer_name  || '-') : '-',
         report ? (report.interview_content || '-') : '-',
         report ? (report.result            || '-') : '-',
         report ? (report.contract_plan     || '-') : '-',
+        report ? (report.student_number    || '-') : '-',
       ];
       const reportExtraCells = extraVals.map((val, i) => {
         const isResultCol = i === 2;
@@ -535,6 +539,16 @@ const ApplicantsPage = {
           : 'font-size:11px;padding:5px 4px;text-align:center;background:#fefce8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0';
         return `<td style="${style}" title="${Utils.escHtml(val)}">${Utils.escHtml(val)}</td>`;
       });
+      // Notionリンク列（ボタン）
+      const notionCell = `<td style="font-size:11px;padding:4px 6px;text-align:center;background:#fefce8">
+        ${notionUrl
+          ? `<a href="${Utils.escHtml(notionUrl)}" target="_blank" rel="noopener noreferrer"
+              style="display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:3px 7px;background:#1e1e1e;color:white;border-radius:5px;text-decoration:none;white-space:nowrap">
+              <i class="fas fa-external-link-alt" style="font-size:9px"></i> Notion
+            </a>`
+          : '<span style="font-size:10px;color:var(--gray-300)">—</span>'
+        }
+      </td>`;
 
       const reportCell = `<div style="display:flex;flex-direction:column;align-items:center;gap:3px">
           ${report
@@ -598,6 +612,7 @@ const ApplicantsPage = {
           </td>
           ${dataCells.join('')}
           ${reportExtraCells.join('')}
+          ${notionCell}
           <td style="text-align:center;padding:4px 2px;white-space:nowrap">${reportCell}</td>
         </tr>`;
     }).join('');
