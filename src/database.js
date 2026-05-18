@@ -228,6 +228,46 @@ function initializeDatabase() {
     )
   `);
 
+  // Notionから取得した応募者詳細プロファイルテーブル
+  // student_number をキーとして各プロパティを保存
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notion_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      student_number TEXT UNIQUE NOT NULL,
+      notion_page_id TEXT,
+      gender TEXT,
+      birth_date TEXT,
+      final_education TEXT,
+      current_job TEXT,
+      job_type TEXT,
+      monthly_income TEXT,
+      disposable_income TEXT,
+      savings TEXT,
+      debt TEXT,
+      has_card TEXT,
+      work_history TEXT,
+      part_time_history TEXT,
+      prefecture TEXT,
+      cohabitants TEXT,
+      has_partner TEXT,
+      partner_understanding TEXT,
+      sales_classification TEXT,
+      has_streaming_experience TEXT,
+      streaming_history TEXT,
+      streaming_equipment TEXT,
+      motivation TEXT,
+      company_reason TEXT,
+      contribution TEXT,
+      vtuber_effort TEXT,
+      other_auditions TEXT,
+      desired_streaming TEXT,
+      vtuber_passion TEXT,
+      medical_history TEXT,
+      raw_json TEXT,
+      synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Check if admin user exists
   const adminExists = db.prepare("SELECT id FROM users WHERE login_id = 'admin'").get();
   if (!adminExists) {

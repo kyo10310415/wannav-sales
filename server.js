@@ -25,6 +25,7 @@ app.use('/api/interview-dates', require('./src/routes/interviewDates'));
 app.use('/api/calendar', require('./src/routes/calendar'));
 app.use('/api/sukuukun', require('./src/routes/sukuukun'));
 app.use('/api/analysis', require('./src/routes/analysis'));
+app.use('/api/notion',   require('./src/routes/notion'));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -46,6 +47,10 @@ app.listen(PORT, () => {
   // ── バックグラウンド: Googleカレンダー自動同期（30分ごと）────
   const calendarSync = require('./src/jobs/calendarSync');
   calendarSync.start(); // 起動10秒後に初回実行 → 以降30分ごと
+
+  // ── バックグラウンド: Notion プロファイル同期（毎日午前3時）──
+  const notionSync = require('./src/jobs/notionSync');
+  notionSync.start(); // 起動30秒後に初回実行 → 以降毎日午前3時
 });
 
 module.exports = app;

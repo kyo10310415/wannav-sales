@@ -40,6 +40,12 @@ const App = {
       title: 'データ分析',
       adminOnly: false,
     },
+    notionDetail: {
+      nav: 'nav-notion-detail',
+      module: () => NotionDetailPage,
+      title: '詳細データ',
+      adminOnly: false,
+    },
     users: {
       nav: 'nav-users',
       module: () => UsersPage,
@@ -150,6 +156,13 @@ const App = {
         page: 'analysis',
         icon: 'fa-brain',
         label: 'データ分析',
+        show: true,
+      },
+      {
+        id: 'nav-notion-detail',
+        page: 'notionDetail',
+        icon: 'fa-database',
+        label: '詳細データ',
         show: true,
       },
       {
