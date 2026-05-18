@@ -325,9 +325,29 @@ const SalesReportModal = {
         await ApplicantsPage.loadReports();
       }
     } catch (err) {
+      const isDuplicate = err.status === 409 || (err.message && err.message.includes('すでに登録'));
       errorEl.style.display = 'flex';
       errorEl.className = 'alert alert-error';
-      errorEl.innerHTML = `<i class="fas fa-exclamation-circle"></i><span>${err.message}</span>`;
+      if (isDuplicate) {
+        // 重複エラー: 既存報告を開くリンクを表示
+        const existingId = err.data?.existingId || null;
+        const editLink = existingId
+          ? `<br><a href="#" id="sr-open-existing" style="color:inherit;text-decoration:underline;font-weight:600">既存の営業報告を開いて編集する →</a>`
+          : '';
+        errorEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i><span>${err.message}${editLink}</span>`;
+        if (existingId) {
+          document.getElementById('sr-open-existing')?.addEventListener('click', async (e) => {
+            e.preventDefault();
+            this.close();
+            try {
+              const report = await API.salesReports.get(existingId);
+              SalesReportModal.open(null, report);
+            } catch (_) { Utils.notify('報告の取得に失敗しました', 'error'); }
+          });
+        }
+      } else {
+        errorEl.innerHTML = `<i class="fas fa-exclamation-circle"></i><span>${err.message}</span>`;
+      }
       saveBtn.disabled = false;
       saveBtn.innerHTML = `<i class="fas fa-save"></i> ${this.editingReport ? '更新' : '保存'}`;
     }

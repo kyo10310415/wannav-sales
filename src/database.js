@@ -199,6 +199,31 @@ function initializeDatabase() {
     console.log(`Migration: sukuukun_speech_analyses.applicant_key backfilled for ${speechKeyFixed.changes} rows`);
   }
 
+  // Migration: sales_reports に applicant_name_email カラム（複合キー用）を追加
+  // 氏名+メールアドレスを正規化結合した値を格納し、UNIQUE制約で同一人物の重複登録を防ぐ
+  // 値のフォーマット: "<正規化氏名>::<小文字メール>" or "<正規化氏名>::" (メールなし)
+  if (!srCols.includes('applicant_name_email')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN applicant_name_email TEXT');
+    // 既存レコードをバックフィル（氏名のスペース除去・小文字化 + メール小文字化）
+    const existing = db.prepare('SELECT id, applicant_full_name, applicant_email FROM sales_reports').all();
+    const update = db.prepare('UPDATE sales_reports SET applicant_name_email = ? WHERE id = ?');
+    const upsertTx = db.transaction(() => {
+      for (const row of existing) {
+        const normalName = (row.applicant_full_name || '').replace(/[\s\u3000]/g, '').toLowerCase();
+        const normalEmail = (row.applicant_email || '').toLowerCase().trim();
+        update.run(`${normalName}::${normalEmail}`, row.id);
+      }
+    });
+    upsertTx();
+    // UNIQUE INDEX を追加（既存データに重複があっても警告のみ）
+    try {
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sr_name_email ON sales_reports(applicant_name_email)');
+      console.log('Migration: sales_reports.applicant_name_email column + UNIQUE INDEX added');
+    } catch (e) {
+      console.warn('Migration: idx_sr_name_email UNIQUE INDEX 作成スキップ（既存重複あり）:', e.message);
+    }
+  }
+
   // すくう君発話比率分析履歴テーブル
   db.exec(`
     CREATE TABLE IF NOT EXISTS sukuukun_speech_analyses (

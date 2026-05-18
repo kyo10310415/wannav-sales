@@ -133,12 +133,21 @@ router.post('/run', authenticateToken, async (req, res) => {
       sr.stay_count, sr.no_count,
       sr.contract_plan, sr.payment_method, sr.character_rights,
       sr.join_reasons, sr.decline_reasons, sr.details,
+      sr.student_number,
       sr.created_at
     FROM sales_reports sr
     WHERE (sr.interview_date BETWEEN ? AND ?)
        OR (sr.interview_date IS NULL AND DATE(sr.created_at) BETWEEN ? AND ?)
     ORDER BY sr.interview_date DESC, sr.created_at DESC
   `).all(from, to, from, to);
+
+  // ── ②' Notion プロファイル取得（学籍番号で紐付け） ──────────
+  const notionProfiles = db.prepare(
+    'SELECT * FROM notion_profiles'
+  ).all();
+  const notionByStudentNum = new Map(
+    notionProfiles.map(p => [p.student_number, p])
+  );
 
   // ── ③ スプレッドシートキャッシュ取得・期間フィルター ────────
   const sheetApplicants = (spreadsheetCache && spreadsheetCache.data)
@@ -169,10 +178,11 @@ router.post('/run', authenticateToken, async (req, res) => {
     a => !reportNames.has(normalName(a.full_name))
   );
 
-  // 営業報告レコードにシートデータを補完（性別・広告媒体等）
+  // 営業報告レコードにシートデータ・Notionプロファイルを補完
   const mergedReports = reports.map(r => {
-    const key   = normalName(r.applicant_full_name);
-    const sheet = sheetByName.get(key) || null;
+    const key    = normalName(r.applicant_full_name);
+    const sheet  = sheetByName.get(key) || null;
+    const notion = (r.student_number && notionByStudentNum.get(r.student_number)) || null;
     return {
       ...r,
       _gender:            sheet?.raw?.['性別']     || '',
@@ -181,6 +191,16 @@ router.post('/run', authenticateToken, async (req, res) => {
       _is_doc_pass:       sheet ? sheet.is_doc_pass        : null,
       _is_interview_resv: sheet ? sheet.is_interview_resv  : null,
       _sheet_matched:     !!sheet,
+      // Notion由来フィールド
+      _notion_final_education:   notion?.final_education          || '',
+      _notion_prefecture:        notion?.prefecture               || '',
+      _notion_monthly_income:    notion?.monthly_income           || '',
+      _notion_sales_class:       notion?.sales_classification     || '',
+      _notion_streaming_exp:     notion?.has_streaming_experience || '',
+      _notion_vtuber_passion:    notion?.vtuber_passion           || '',
+      _notion_motivation:        notion?.motivation               || '',
+      _notion_medical:           notion?.medical_history          || '',
+      _notion_matched:           !!notion,
     };
   });
 
@@ -240,6 +260,56 @@ router.post('/run', authenticateToken, async (req, res) => {
     (r.decline_reasons || '').split(',').map(s => s.trim()).filter(Boolean).forEach(reason => {
       declineReasonCount[reason] = (declineReasonCount[reason] || 0) + 1;
     });
+  }
+
+  // ── ⑤' Notion由来の集計 ───────────────────────────────────
+  const notionMatchedReports   = mergedReports.filter(r => r._notion_matched);
+  const notionMatchCount       = notionMatchedReports.length;
+  const notionContractReports  = notionMatchedReports.filter(r => CONTRACT_RESULTS.has(r.result));
+
+  // 都道府県別集計（Notion一致レコード）
+  const byPrefecture = {};
+  for (const r of notionMatchedReports) {
+    const pref = r._notion_prefecture || '不明';
+    if (!byPrefecture[pref]) byPrefecture[pref] = { total: 0, contract: 0 };
+    byPrefecture[pref].total++;
+    if (CONTRACT_RESULTS.has(r.result)) byPrefecture[pref].contract++;
+  }
+
+  // 最終学歴別集計
+  const byFinalEducation = {};
+  for (const r of notionMatchedReports) {
+    const edu = r._notion_final_education || '不明';
+    if (!byFinalEducation[edu]) byFinalEducation[edu] = { total: 0, contract: 0 };
+    byFinalEducation[edu].total++;
+    if (CONTRACT_RESULTS.has(r.result)) byFinalEducation[edu].contract++;
+  }
+
+  // Sales3分類別集計
+  const bySalesClass = {};
+  for (const r of notionMatchedReports) {
+    const cls = r._notion_sales_class || '不明';
+    if (!bySalesClass[cls]) bySalesClass[cls] = { total: 0, contract: 0 };
+    bySalesClass[cls].total++;
+    if (CONTRACT_RESULTS.has(r.result)) bySalesClass[cls].contract++;
+  }
+
+  // 配信経験別集計
+  const byStreamingExp = {};
+  for (const r of notionMatchedReports) {
+    const exp = r._notion_streaming_exp || '不明';
+    if (!byStreamingExp[exp]) byStreamingExp[exp] = { total: 0, contract: 0 };
+    byStreamingExp[exp].total++;
+    if (CONTRACT_RESULTS.has(r.result)) byStreamingExp[exp].contract++;
+  }
+
+  // 月収帯別集計（契約者 vs 全体）
+  const byIncome = {};
+  for (const r of notionMatchedReports) {
+    const income = r._notion_monthly_income || '不明';
+    if (!byIncome[income]) byIncome[income] = { total: 0, contract: 0 };
+    byIncome[income].total++;
+    if (CONTRACT_RESULTS.has(r.result)) byIncome[income].contract++;
   }
 
   // ── シート固有集計 ────────────────────────────────────────
@@ -317,15 +387,59 @@ router.post('/run', authenticateToken, async (req, res) => {
     .sort((a, b) => b[1] - a[1]).slice(0, 10)
     .map(([src, n]) => `  - ${src}: ${n}人`).join('\n');
 
+  // Notion集計サマリー文字列
+  const prefSummary = Object.entries(byPrefecture)
+    .sort((a, b) => b[1].total - a[1].total).slice(0, 10)
+    .map(([p, d]) => {
+      const cvr = d.total > 0 ? Math.round(d.contract / d.total * 1000) / 10 : 0;
+      return `  - ${p}: ${d.total}人 / 契約${d.contract}人 / CVR${cvr}%`;
+    }).join('\n');
+
+  const eduSummary = Object.entries(byFinalEducation)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([e, d]) => {
+      const cvr = d.total > 0 ? Math.round(d.contract / d.total * 1000) / 10 : 0;
+      return `  - ${e}: ${d.total}人 / 契約${d.contract}人 / CVR${cvr}%`;
+    }).join('\n');
+
+  const salesClassSummary = Object.entries(bySalesClass)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([c, d]) => {
+      const cvr = d.total > 0 ? Math.round(d.contract / d.total * 1000) / 10 : 0;
+      return `  - ${c}: ${d.total}人 / 契約${d.contract}人 / CVR${cvr}%`;
+    }).join('\n');
+
+  const streamingSummary = Object.entries(byStreamingExp)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([e, d]) => {
+      const cvr = d.total > 0 ? Math.round(d.contract / d.total * 1000) / 10 : 0;
+      return `  - ${e}: ${d.total}人 / 契約${d.contract}人 / CVR${cvr}%`;
+    }).join('\n');
+
+  const incomeSummary = Object.entries(byIncome)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([i, d]) => {
+      const cvr = d.total > 0 ? Math.round(d.contract / d.total * 1000) / 10 : 0;
+      return `  - ${i}: ${d.total}人 / 契約${d.contract}人 / CVR${cvr}%`;
+    }).join('\n');
+
   // 個別レコード（マージ済み・直近50件）
   const recentRecords = mergedReports.slice(0, 50).map(r =>
     `[${r.interview_date || r.created_at?.slice(0, 10)}] 担当:${r.interviewer_name || '-'} ` +
     `応募者:${r.applicant_full_name || '-'} ` +
-    (r._gender     ? `性別:${r._gender} `     : '') +
-    (r._ad_source  ? `媒体:${r._ad_source} `  : '') +
+    (r._gender               ? `性別:${r._gender} `                        : '') +
+    (r._ad_source            ? `媒体:${r._ad_source} `                     : '') +
     `内容:${r.interview_content || '-'} ` +
     `結果:${r.result || '-'} STAY:${r.stay_count ?? '-'} NO:${r.no_count ?? '-'} ` +
     `支払:${r.payment_method || '-'} 権利:${r.character_rights || '-'} ` +
+    (r._notion_matched ? (
+      (r._notion_prefecture     ? `都道府県:${r._notion_prefecture} `      : '') +
+      (r._notion_final_education? `学歴:${r._notion_final_education} `     : '') +
+      (r._notion_sales_class    ? `Sales分類:${r._notion_sales_class} `   : '') +
+      (r._notion_streaming_exp  ? `配信経験:${r._notion_streaming_exp} `  : '') +
+      (r._notion_monthly_income ? `月収:${r._notion_monthly_income} `     : '') +
+      (r._notion_vtuber_passion ? `Vtuber熱量:${r._notion_vtuber_passion} ` : '')
+    ) : '') +
     (r.join_reasons    ? `入会理由:[${r.join_reasons}] `    : '') +
     (r.decline_reasons ? `辞退理由:[${r.decline_reasons}] ` : '') +
     (r.details ? `備考:${r.details.slice(0, 60)}` : '')
@@ -341,7 +455,7 @@ router.post('/run', authenticateToken, async (req, res) => {
 
   const dataText = `
 【分析期間】${date_from || '全期間'} 〜 ${date_to || '現在'}
-【データ統合】営業報告DB ${totalReports}件 ＋ スプレッドシート ${sheetTotal}人（重複は営業報告を優先）
+【データ統合】営業報告DB ${totalReports}件 ＋ スプレッドシート ${sheetTotal}人（重複は営業報告を優先）＋ Notionプロファイル照合 ${notionMatchCount}件/${totalReports}件
 
 【ファネル（スプレッドシート全体）】
   応募者数:   ${sheetTotal}人
@@ -382,7 +496,25 @@ ${joinTop || '  データなし'}
 【辞退理由TOP】
 ${declineTop || '  データなし'}
 
-【直近${Math.min(50, totalReports)}件の個別レコード（営業報告＋シート統合）】
+【Notion詳細データ統合（学籍番号一致: ${notionMatchCount}件 / 営業報告総数: ${totalReports}件）】
+${notionMatchCount === 0 ? '  ※学籍番号が一致したレコードなし（Notion未連携または学籍番号未入力）' : ''}
+
+【最終学歴別集計（Notionデータ）】
+${eduSummary || '  データなし'}
+
+【都道府県別集計TOP10（Notionデータ）】
+${prefSummary || '  データなし'}
+
+【Sales3分類別集計（Notionデータ）】
+${salesClassSummary || '  データなし'}
+
+【配信経験別集計（Notionデータ）】
+${streamingSummary || '  データなし'}
+
+【月収帯別集計（Notionデータ）】
+${incomeSummary || '  データなし'}
+
+【直近${Math.min(50, totalReports)}件の個別レコード（営業報告＋シート＋Notion統合）】
 ${recentRecords || '  データなし'}
 
 【直近${Math.min(20, sheetOnlyTotal)}件のシートのみ応募者（営業報告未記入）】

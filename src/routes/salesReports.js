@@ -59,6 +59,21 @@ router.post('/', authenticateToken, (req, res) => {
     return res.status(400).json({ error: '面接担当者と氏名は必須です' });
   }
 
+  // 氏名+メールの複合キー生成
+  const nameEmailKey = makeNameEmailKey(applicant_full_name, applicant_email);
+
+  // 同一応募者（氏名+メール一致）の既存レポートを確認
+  const existing = db.prepare(
+    'SELECT id, interview_date, result FROM sales_reports WHERE applicant_name_email = ? ORDER BY id DESC LIMIT 1'
+  ).get(nameEmailKey);
+  if (existing) {
+    const dateStr = existing.interview_date || '（日付不明）';
+    return res.status(409).json({
+      error: `この応募者の営業報告（面接日: ${dateStr} / 結果: ${existing.result || '未記入'}）がすでに登録されています。編集する場合は既存の報告を開いてください。`,
+      existingId: existing.id,
+    });
+  }
+
   try {
     const stmt = db.prepare(`
       INSERT INTO sales_reports (
@@ -67,8 +82,9 @@ router.post('/', authenticateToken, (req, res) => {
         student_number, interview_date, interview_content, result,
         stay_count, no_count, contract_plan,
         payment_method, notion_url, lesson_start_date,
-        character_rights, join_reasons, decline_reasons, phone_number, details
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        character_rights, join_reasons, decline_reasons, phone_number, details,
+        applicant_name_email
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result_db = stmt.run(
@@ -80,12 +96,16 @@ router.post('/', authenticateToken, (req, res) => {
       character_rights,
       Array.isArray(join_reasons) ? join_reasons.join(',') : (join_reasons || ''),
       Array.isArray(decline_reasons) ? decline_reasons.join(',') : (decline_reasons || ''),
-      phone_number, details
+      phone_number, details,
+      nameEmailKey
     );
 
     const report = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(result_db.lastInsertRowid);
     res.status(201).json(report);
   } catch (err) {
+    if (err.message && err.message.includes('UNIQUE constraint failed')) {
+      return res.status(409).json({ error: 'この応募者の営業報告はすでに登録されています（氏名・メールアドレスが一致）。' });
+    }
     res.status(500).json({ error: '営業報告の保存に失敗しました: ' + err.message });
   }
 });
@@ -108,27 +128,49 @@ router.put('/:id', authenticateToken, (req, res) => {
     character_rights, join_reasons, decline_reasons, phone_number, details
   } = req.body;
 
-  db.prepare(`
-    UPDATE sales_reports SET
-      interviewer_id = ?, interviewer_name = ?, applicant_full_name = ?,
-      applicant_last_name = ?, applicant_first_name = ?, applicant_email = ?,
-      student_number = ?, interview_date = ?, interview_content = ?, result = ?,
-      stay_count = ?, no_count = ?, contract_plan = ?,
-      payment_method = ?, notion_url = ?, lesson_start_date = ?,
-      character_rights = ?, join_reasons = ?, decline_reasons = ?,
-      phone_number = ?, details = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(
-    interviewer_id, interviewer_name, applicant_full_name,
-    applicant_last_name, applicant_first_name, applicant_email,
-    student_number, interview_date || null, interview_content, result,
-    stay_count ?? 0, no_count ?? 0, contract_plan,
-    payment_method, notion_url, lesson_start_date,
-    character_rights,
-    Array.isArray(join_reasons) ? join_reasons.join(',') : (join_reasons || ''),
-    Array.isArray(decline_reasons) ? decline_reasons.join(',') : (decline_reasons || ''),
-    phone_number, details, id
-  );
+  // 氏名またはメールが変更された場合は複合キーを再生成
+  const updatedKey = makeNameEmailKey(applicant_full_name, applicant_email);
+
+  // 他のレコードと重複しないか確認（自分自身は除外）
+  const conflicting = db.prepare(
+    'SELECT id FROM sales_reports WHERE applicant_name_email = ? AND id != ?'
+  ).get(updatedKey, id);
+  if (conflicting) {
+    return res.status(409).json({
+      error: `この氏名・メールアドレスの組み合わせでは別の営業報告（ID: ${conflicting.id}）がすでに登録されています。`,
+      existingId: conflicting.id,
+    });
+  }
+
+  try {
+    db.prepare(`
+      UPDATE sales_reports SET
+        interviewer_id = ?, interviewer_name = ?, applicant_full_name = ?,
+        applicant_last_name = ?, applicant_first_name = ?, applicant_email = ?,
+        student_number = ?, interview_date = ?, interview_content = ?, result = ?,
+        stay_count = ?, no_count = ?, contract_plan = ?,
+        payment_method = ?, notion_url = ?, lesson_start_date = ?,
+        character_rights = ?, join_reasons = ?, decline_reasons = ?,
+        phone_number = ?, details = ?, applicant_name_email = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      interviewer_id, interviewer_name, applicant_full_name,
+      applicant_last_name, applicant_first_name, applicant_email,
+      student_number, interview_date || null, interview_content, result,
+      stay_count ?? 0, no_count ?? 0, contract_plan,
+      payment_method, notion_url, lesson_start_date,
+      character_rights,
+      Array.isArray(join_reasons) ? join_reasons.join(',') : (join_reasons || ''),
+      Array.isArray(decline_reasons) ? decline_reasons.join(',') : (decline_reasons || ''),
+      phone_number, details, updatedKey, id
+    );
+  } catch (err) {
+    if (err.message && err.message.includes('UNIQUE constraint failed')) {
+      return res.status(409).json({ error: 'この応募者の営業報告はすでに別のIDで登録されています。' });
+    }
+    return res.status(500).json({ error: '営業報告の更新に失敗しました: ' + err.message });
+  }
 
   const updated = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(id);
   res.json(updated);
@@ -151,12 +193,22 @@ router.delete('/:id', authenticateToken, (req, res) => {
 // 契約判定・重複除外（stats.js と共通ロジック）
 // ============================================================
 const SR_CONTRACT_CONDITION = `result IN ('契約', '契約＆職業案内', '契約＆職業案内（CP）')`;
+// 氏名+メールアドレスの複合キーで重複除外（同姓同名対応）
+// applicant_name_email が NULL の旧レコードは applicant_full_name にフォールバック
 const SR_DEDUP_SUBQUERY = `(
   SELECT * FROM sales_reports
   WHERE id IN (
-    SELECT MAX(id) FROM sales_reports GROUP BY applicant_full_name
+    SELECT MAX(id) FROM sales_reports
+    GROUP BY COALESCE(NULLIF(applicant_name_email,''), applicant_full_name)
   )
 ) AS sr`;
+
+// 氏名・メールアドレスを正規化して複合キーを生成するヘルパー
+function makeNameEmailKey(fullName, email) {
+  const normalName  = (fullName || '').replace(/[\s\u3000]/g, '').toLowerCase();
+  const normalEmail = (email   || '').toLowerCase().trim();
+  return `${normalName}::${normalEmail}`;
+}
 
 // GET /api/sales-reports/stats/cvr - CVR集計
 router.get('/stats/cvr', authenticateToken, (req, res) => {

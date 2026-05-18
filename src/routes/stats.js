@@ -11,12 +11,14 @@ const CONTRACT_CONDITION = `result IN ('契約', '契約＆職業案内', '契�
 
 // ============================================================
 // 同一応募者の重複レコードを除いた最新1件ベースのサブクエリ
-// applicant_full_name でグループ化し MAX(id) = 最新レコードのみ使用
+// applicant_name_email（氏名+メール複合キー）でグループ化し MAX(id) = 最新レコードのみ使用
+// ※ applicant_name_email が NULL のレコードは applicant_full_name にフォールバック
 // ============================================================
 const DEDUP_SUBQUERY = `(
   SELECT * FROM sales_reports
   WHERE id IN (
-    SELECT MAX(id) FROM sales_reports GROUP BY applicant_full_name
+    SELECT MAX(id) FROM sales_reports
+    GROUP BY COALESCE(NULLIF(applicant_name_email,''), applicant_full_name)
   )
 ) AS sr`;
 
