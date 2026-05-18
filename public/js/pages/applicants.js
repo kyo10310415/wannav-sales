@@ -310,10 +310,22 @@ const ApplicantsPage = {
   },
 
   getReportForApplicant(a) {
-    return this.reports.find(r =>
-      (a.email && r.applicant_email === a.email) ||
-      (r.applicant_full_name === a.full_name)
-    ) || null;
+    // 優先順位: ① メール一致 → ② 氏名一致（メールなし同士）
+    // 同姓同名でメールが異なる場合は別人として扱う
+    const aEmail = (a.email || '').toLowerCase().trim();
+    return this.reports.find(r => {
+      const rEmail = (r.applicant_email || '').toLowerCase().trim();
+      if (aEmail && rEmail) {
+        // 両方メールあり → メール+氏名の完全一致
+        return rEmail === aEmail && r.applicant_full_name === a.full_name;
+      }
+      if (!aEmail && !rEmail) {
+        // 両方メールなし → 氏名のみ一致
+        return r.applicant_full_name === a.full_name;
+      }
+      // 片方だけメールあり → 氏名一致で仮紐付け（曖昧一致として許容）
+      return r.applicant_full_name === a.full_name;
+    }) || null;
   },
 
   filterAndRender() {
