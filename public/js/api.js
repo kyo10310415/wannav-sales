@@ -181,4 +181,12 @@ const API = {
     run: (data) => API.post('/analysis/run', data),
     exportSheet: (data) => API.post('/analysis/export-sheet', data),
   },
+
+  // Notion Profiles
+  notion: {
+    profiles:   ()   => API.get('/notion/profiles'),
+    profile:    (sn) => API.get(`/notion/profiles/${encodeURIComponent(sn)}`),
+    sync:       ()   => API.post('/notion/sync', {}),
+    syncStatus: ()   => API.get('/notion/sync-status'),
+  },
 };
