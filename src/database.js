@@ -170,13 +170,6 @@ function initializeDatabase() {
     console.log('Migration: sukuukun_evaluations.applicant_key column added');
   }
 
-  // Migration: sukuukun_speech_analyses に applicant_key カラムを追加（機能1）
-  const speechCols = db.prepare('PRAGMA table_info(sukuukun_speech_analyses)').all().map(c => c.name);
-  if (!speechCols.includes('applicant_key')) {
-    db.exec('ALTER TABLE sukuukun_speech_analyses ADD COLUMN applicant_key TEXT');
-    console.log('Migration: sukuukun_speech_analyses.applicant_key column added');
-  }
-
   // Migration: applicant_interview_dates に source カラムを追加（機能3）
   const dateCols = db.prepare('PRAGMA table_info(applicant_interview_dates)').all().map(c => c.name);
   if (!dateCols.includes('source')) {
@@ -192,13 +185,6 @@ function initializeDatabase() {
   if (evalKeyFixed.changes > 0) {
     console.log(`Migration: sukuukun_evaluations.applicant_key backfilled for ${evalKeyFixed.changes} rows`);
   }
-  const speechKeyFixed = db.prepare(
-    "UPDATE sukuukun_speech_analyses SET applicant_key = applicant_name WHERE applicant_key IS NULL AND applicant_name IS NOT NULL"
-  ).run();
-  if (speechKeyFixed.changes > 0) {
-    console.log(`Migration: sukuukun_speech_analyses.applicant_key backfilled for ${speechKeyFixed.changes} rows`);
-  }
-
   // Migration: sales_reports に applicant_name_email カラム（複合キー用）を追加
   // 氏名+メールアドレスを正規化結合した値を格納し、UNIQUE制約で同一人物の重複登録を防ぐ
   // 値のフォーマット: "<正規化氏名>::<小文字メール>" or "<正規化氏名>::" (メールなし)
@@ -225,6 +211,7 @@ function initializeDatabase() {
   }
 
   // すくう君発話比率分析履歴テーブル
+  // ※ Migration（applicant_key追加・バックフィル）はこのCREATE TABLE の直後に記述
   db.exec(`
     CREATE TABLE IF NOT EXISTS sukuukun_speech_analyses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -252,6 +239,20 @@ function initializeDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Migration: sukuukun_speech_analyses に applicant_key カラムを追加（機能1）
+  // ※ CREATE TABLE の後に実行しないとテーブル未存在エラーになる
+  const speechCols = db.prepare('PRAGMA table_info(sukuukun_speech_analyses)').all().map(c => c.name);
+  if (!speechCols.includes('applicant_key')) {
+    db.exec('ALTER TABLE sukuukun_speech_analyses ADD COLUMN applicant_key TEXT');
+    console.log('Migration: sukuukun_speech_analyses.applicant_key column added');
+  }
+  const speechKeyFixed = db.prepare(
+    "UPDATE sukuukun_speech_analyses SET applicant_key = applicant_name WHERE applicant_key IS NULL AND applicant_name IS NOT NULL"
+  ).run();
+  if (speechKeyFixed.changes > 0) {
+    console.log(`Migration: sukuukun_speech_analyses.applicant_key backfilled for ${speechKeyFixed.changes} rows`);
+  }
 
   // Notionから取得した応募者詳細プロファイルテーブル
   // student_number をキーとして各プロパティを保存
