@@ -12,12 +12,13 @@ const StatsPage = {
   allPeriods: [],
   // フィルター
   filters: {
-    interviewer:    '',
-    gender:         '',
-    age_group:      '',
-    income_level:   '',
-    job_type:       '',
-    streaming_exp:  '',
+    interviewer:              '',
+    gender:                   '',
+    age_group:                '',
+    monthly_income_range:     '',
+    disposable_income_range:  '',
+    job_type:                 '',
+    streaming_exp:            '',
   },
   filterOptions: null, // 選択肢キャッシュ
 
@@ -184,6 +185,7 @@ const StatsPage = {
     const o = this.filterOptions;
     const f = this.filters;
 
+    // 文字列選択肢 select
     const sel = (id, label, opts, val) => `
       <div class="form-group" style="margin-bottom:0;min-width:150px">
         <label class="form-label" style="font-size:11px;margin-bottom:4px">${label}</label>
@@ -193,27 +195,46 @@ const StatsPage = {
         </select>
       </div>`;
 
+    // value/label オブジェクト配列の select（月収・可処分所得の範囲帯）
+    const selObj = (id, label, opts, val) => `
+      <div class="form-group" style="margin-bottom:0;min-width:170px">
+        <label class="form-label" style="font-size:11px;margin-bottom:4px">${label}</label>
+        <select id="filter-${id}" class="form-control" style="font-size:12px;padding:5px 8px">
+          <option value="">すべて</option>
+          ${opts.map(r => `<option value="${Utils.escHtml(r.value)}" ${val===r.value?'selected':''}>${Utils.escHtml(r.label)}</option>`).join('')}
+        </select>
+      </div>`;
+
     fb.innerHTML = `
       <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
-        ${sel('interviewer',   '担当者',   o.interviewers,   f.interviewer)}
-        ${sel('gender',        '性別',     o.genders,        f.gender)}
-        ${sel('age_group',     '年齢帯',   o.age_groups,     f.age_group)}
-        ${sel('income_level',  '月収帯',   o.income_levels,  f.income_level)}
-        ${sel('job_type',      '職種',     o.job_types,      f.job_type)}
-        ${sel('streaming_exp', '配信経験', o.streaming_exps, f.streaming_exp)}
+        ${sel('interviewer',              '担当者',         o.interviewers,            f.interviewer)}
+        ${sel('gender',                   '性別',           o.genders,                 f.gender)}
+        ${sel('age_group',                '年齢帯',         o.age_groups,              f.age_group)}
+        ${selObj('monthly_income_range',     '月収',           o.monthly_income_ranges,   f.monthly_income_range)}
+        ${selObj('disposable_income_range',  '可処分所得',     o.disposable_income_ranges, f.disposable_income_range)}
+        ${sel('job_type',                 '職種',           o.job_types,               f.job_type)}
+        ${sel('streaming_exp',            '配信経験',       o.streaming_exps,          f.streaming_exp)}
       </div>
       <div style="margin-top:8px;font-size:11px;color:var(--gray-400)">
         <i class="fas fa-info-circle" style="margin-right:4px"></i>
-        性別・年齢帯・月収帯・職種・配信経験は Notion プロファイルが登録済みの応募者のみ対象です
+        性別・年齢帯・月収・可処分所得・職種・配信経験は Notion プロファイルが登録済みの応募者のみ対象です
       </div>`;
   },
 
   _readFilters() {
-    const ids = ['interviewer','gender','age_group','income_level','job_type','streaming_exp'];
+    // id → filters キーのマッピング（id と key が同じなものはそのまま）
+    const idKeyMap = [
+      ['interviewer',             'interviewer'],
+      ['gender',                  'gender'],
+      ['age_group',               'age_group'],
+      ['monthly_income_range',    'monthly_income_range'],
+      ['disposable_income_range', 'disposable_income_range'],
+      ['job_type',                'job_type'],
+      ['streaming_exp',           'streaming_exp'],
+    ];
     let count = 0;
-    for (const id of ids) {
+    for (const [id, key] of idKeyMap) {
       const el = document.getElementById(`filter-${id}`);
-      const key = id === 'age_group' ? 'age_group' : id === 'income_level' ? 'income_level' : id === 'streaming_exp' ? 'streaming_exp' : id;
       if (el) {
         this.filters[key] = el.value;
         if (el.value) count++;
@@ -228,7 +249,11 @@ const StatsPage = {
   },
 
   clearFilter() {
-    this.filters = { interviewer:'', gender:'', age_group:'', income_level:'', job_type:'', streaming_exp:'' };
+    this.filters = {
+      interviewer: '', gender: '', age_group: '',
+      monthly_income_range: '', disposable_income_range: '',
+      job_type: '', streaming_exp: '',
+    };
     this._renderFilterBody();
     const badge = document.getElementById('filter-badge');
     if (badge) { badge.textContent = ''; badge.style.display = 'none'; }
@@ -735,21 +760,38 @@ const StatsPage = {
   // ============================================================
   _activeFilterParams() {
     const params = {};
-    if (this.filters.interviewer)   params.interviewer    = this.filters.interviewer;
-    if (this.filters.gender)        params.gender         = this.filters.gender;
-    if (this.filters.age_group)     params.age_group      = this.filters.age_group;
-    if (this.filters.income_level)  params.income_level   = this.filters.income_level;
-    if (this.filters.job_type)      params.job_type       = this.filters.job_type;
-    if (this.filters.streaming_exp) params.streaming_exp  = this.filters.streaming_exp;
+    if (this.filters.interviewer)              params.interviewer              = this.filters.interviewer;
+    if (this.filters.gender)                   params.gender                   = this.filters.gender;
+    if (this.filters.age_group)                params.age_group                = this.filters.age_group;
+    if (this.filters.monthly_income_range)     params.monthly_income_range     = this.filters.monthly_income_range;
+    if (this.filters.disposable_income_range)  params.disposable_income_range  = this.filters.disposable_income_range;
+    if (this.filters.job_type)                 params.job_type                 = this.filters.job_type;
+    if (this.filters.streaming_exp)            params.streaming_exp            = this.filters.streaming_exp;
     return params;
   },
 
   _filterNote() {
     const active = Object.entries(this.filters).filter(([,v]) => v);
     if (!active.length) return '';
-    const labels = { interviewer:'担当者', gender:'性別', age_group:'年齢帯', income_level:'月収帯', job_type:'職種', streaming_exp:'配信経験' };
+    const labels = {
+      interviewer:             '担当者',
+      gender:                  '性別',
+      age_group:               '年齢帯',
+      monthly_income_range:    '月収',
+      disposable_income_range: '可処分所得',
+      job_type:                '職種',
+      streaming_exp:           '配信経験',
+    };
+    // 月収・可処分所得は value→label変換が必要
+    const MONTHLY_LABELS   = { lt100k:'100,000円未満', mid:'100,000〜299,999円', gte300k:'300,000円以上' };
+    const DISPOSABLE_LABELS = { lt10k:'10,000円未満',  mid:'10,000〜49,999円',  gte50k:'50,000円以上'  };
     return '<i class="fas fa-filter" style="margin-right:4px"></i>' +
-      active.map(([k,v]) => `${labels[k]}: ${Utils.escHtml(v)}`).join(' / ');
+      active.map(([k, v]) => {
+        let display = v;
+        if (k === 'monthly_income_range')    display = MONTHLY_LABELS[v]   || v;
+        if (k === 'disposable_income_range') display = DISPOSABLE_LABELS[v] || v;
+        return `${labels[k]}: ${Utils.escHtml(display)}`;
+      }).join(' / ');
   },
 
   formatMonthLabel(period) {
