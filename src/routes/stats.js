@@ -9,6 +9,7 @@ const { authenticateToken } = require('../middleware/auth');
 // ============================================================
 const CONTRACT_CONDITION   = `result IN ('契約', '契約＆職業案内', '契約＆職業案内（CP）')`;
 const COOLINGOFF_CONDITION = `result = 'クーリングオフ'`;
+const NOSHOW_CONDITION     = `result = '飛び'`;
 
 // ============================================================
 // 重複除外サブクエリ（氏名+メール複合キー、フォールバックあり）
@@ -184,9 +185,10 @@ router.get('/weekly', authenticateToken, (req, res) => {
   const data = db.prepare(`
     SELECT
       strftime('%Y-W%W', COALESCE(sr.interview_date, sr.created_at)) as period,
-      COUNT(*) as total_interviews,
-      SUM(CASE WHEN ${CONTRACT_CONDITION}   THEN 1 ELSE 0 END) as total_contracts,
-      SUM(CASE WHEN ${COOLINGOFF_CONDITION} THEN 1 ELSE 0 END) as total_coolingoff
+      SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
+      SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
+      SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
+      SUM(CASE WHEN ${NOSHOW_CONDITION}       THEN 1 ELSE 0 END) as total_noshow
     ${baseSQL}
     GROUP BY period
     ORDER BY period DESC
@@ -213,9 +215,10 @@ router.get('/monthly', authenticateToken, (req, res) => {
   const data = db.prepare(`
     SELECT
       strftime('%Y-%m', COALESCE(sr.interview_date, sr.created_at)) as period,
-      COUNT(*) as total_interviews,
-      SUM(CASE WHEN ${CONTRACT_CONDITION}   THEN 1 ELSE 0 END) as total_contracts,
-      SUM(CASE WHEN ${COOLINGOFF_CONDITION} THEN 1 ELSE 0 END) as total_coolingoff
+      SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
+      SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
+      SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
+      SUM(CASE WHEN ${NOSHOW_CONDITION}       THEN 1 ELSE 0 END) as total_noshow
     ${baseSQL}
     GROUP BY period
     ORDER BY period DESC
@@ -284,9 +287,17 @@ router.get('/summary', authenticateToken, (req, res) => {
 
   const baseSQL = `FROM ${dedup} ${joinClause} ${whereClause}`;
 
-  // 面接実施数 = 営業報告が上がっている件数（常に営業報告ベース）
+  // 面接実施数 = 営業報告が上がっている件数のうち「飛び」を除外
   const totalInterviewsRow = db.prepare(
-    `SELECT COUNT(*) as count ${baseSQL}`
+    `SELECT SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as count ${baseSQL}`
+  ).get(...allParams);
+
+  // 飛び件数
+  const noshowCond = allConds.length
+    ? `${allConds.join(' AND ')} AND ${NOSHOW_CONDITION}`
+    : NOSHOW_CONDITION;
+  const totalNoshowRow = db.prepare(
+    `SELECT COUNT(*) as count FROM ${dedup} ${joinClause} WHERE ${noshowCond}`
   ).get(...allParams);
 
   // 契約数（CV = 営業報告の契約結果のみ）
@@ -316,9 +327,10 @@ router.get('/summary', authenticateToken, (req, res) => {
     ORDER BY count DESC
   `).all(...allParams);
 
-  const totalInterviews = totalInterviewsRow.count;
+  const totalInterviews = totalInterviewsRow.count || 0;
   const totalContracts  = totalContractsRow.count;
   const totalCoolingoff = totalCoolingoffRow.count;
+  const totalNoshow     = totalNoshowRow.count;
   const appCount        = parseInt(applicant_count) || 0;
 
   const cvrInterview  = totalInterviews > 0
@@ -334,6 +346,7 @@ router.get('/summary', authenticateToken, (req, res) => {
     total_interviews: totalInterviews,
     total_contracts:  totalContracts,
     total_coolingoff: totalCoolingoff,
+    total_noshow:     totalNoshow,
     coolingoff_rate:  coolingoffRate,
     applicant_count:  appCount,
     cvr_interview:    cvrInterview,
@@ -359,9 +372,10 @@ router.get('/all-periods', authenticateToken, (req, res) => {
   const data = db.prepare(`
     SELECT
       ${fmt} as period,
-      COUNT(*) as total_interviews,
-      SUM(CASE WHEN ${CONTRACT_CONDITION}   THEN 1 ELSE 0 END) as total_contracts,
-      SUM(CASE WHEN ${COOLINGOFF_CONDITION} THEN 1 ELSE 0 END) as total_coolingoff
+      SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
+      SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
+      SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
+      SUM(CASE WHEN ${NOSHOW_CONDITION}       THEN 1 ELSE 0 END) as total_noshow
     ${baseSQL}
     GROUP BY period
     ORDER BY period DESC
