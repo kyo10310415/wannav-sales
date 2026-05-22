@@ -592,7 +592,14 @@ const StatsPage = {
             });
           }
           return API.spreadsheet.applicantsCount({ period: this.currentType, value: p.value })
-            .then(d => ({ period: p.value, label: p.label, ...d }))
+            // APIレスポンスの period/value フィールドで p.value が上書きされないよう明示的に展開
+            .then(d => ({
+              period:               p.value,
+              label:                p.label,
+              count:                d.count               || 0,
+              doc_pass_count:       d.doc_pass_count       || 0,
+              interview_resv_count: d.interview_resv_count || 0,
+            }))
             .catch(() => ({ period: p.value, label: p.label, count:0, doc_pass_count:0, interview_resv_count:0 }));
         })
       );
