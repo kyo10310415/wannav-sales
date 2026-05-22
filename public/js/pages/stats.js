@@ -452,17 +452,18 @@ const StatsPage = {
     const apply = this.applicantCount;
     const doc   = this.docPassCount;
     const resv  = this.interviewResvCount;
-    // 面接実施数は営業報告件数（CVR集計ビューの total_interviews）から取得
-    // ここでは応募→書類→予約の3ステップのみシートデータで表示
+    // 面接実施数: this.allPeriods（営業報告ベース）から選択期間の total_interviews を取得
+    const periodRow = this.allPeriods.find(d => d.period === this.currentPeriod);
+    const intv      = periodRow ? (periodRow.total_interviews || 0) : 0;
     const filterNote = this._filterNote();
 
     const pct = (num, base) => base > 0 ? ((num / base) * 100).toFixed(1) : '—';
 
     const steps = [
-      { label:'応募',     icon:'fa-user-plus',      color:'#3b82f6', bg:'#eff6ff', count:apply, rateLabel:null,            rate:null,              sub: null },
-      { label:'書類通過', icon:'fa-file-alt',        color:'#8b5cf6', bg:'#f5f3ff', count:doc,   rateLabel:'応募→書類通過', rate:pct(doc,  apply),  sub: null },
-      { label:'面接予約', icon:'fa-calendar-check',  color:'#f59e0b', bg:'#fffbeb', count:resv,  rateLabel:'書類→面接予約', rate:pct(resv, doc),    sub: null },
-      { label:'面接実施', icon:'fa-clipboard-check', color:'#10b981', bg:'#ecfdf5', count: null, rateLabel:null,            rate:null,              sub: 'CVR集計タブを参照' },
+      { label:'応募',     icon:'fa-user-plus',      color:'#3b82f6', bg:'#eff6ff', count:apply, rateLabel:null,            rate:null },
+      { label:'書類通過', icon:'fa-file-alt',        color:'#8b5cf6', bg:'#f5f3ff', count:doc,   rateLabel:'応募→書類通過', rate:pct(doc,  apply) },
+      { label:'面接予約', icon:'fa-calendar-check',  color:'#f59e0b', bg:'#fffbeb', count:resv,  rateLabel:'書類→面接予約', rate:pct(resv, doc)   },
+      { label:'面接実施', icon:'fa-clipboard-check', color:'#10b981', bg:'#ecfdf5', count:intv,  rateLabel:'予約→面接実施', rate:pct(intv, resv)  },
     ];
     const totalCvr = pct(doc, apply); // 応募→書類通過のサマリー
 
@@ -474,7 +475,7 @@ const StatsPage = {
           </div>
           ${filterNote ? `<div style="font-size:11px;color:var(--primary);background:#eff6ff;border-radius:6px;padding:2px 10px">${filterNote}</div>` : ''}
         </div>
-        <div style="font-size:12px;color:var(--gray-500)">応募・書類通過・面接予約: スプレッドシート／面接実施: 営業報告</div>
+        <div style="font-size:12px;color:var(--gray-500)">応募〜面接予約: スプレッドシート　面接実施: 営業報告</div>
       </div>
 
       <div style="display:flex;gap:6px;align-items:stretch;flex-wrap:wrap;margin-bottom:16px">
@@ -486,21 +487,16 @@ const StatsPage = {
               </div>
               <span style="font-size:12px;font-weight:700;color:${s.color}">${s.label}</span>
             </div>
-            ${s.count !== null
-              ? `<div style="font-size:28px;font-weight:800;color:${s.color};line-height:1">
-                  ${s.count.toLocaleString()}<span style="font-size:13px;font-weight:500">件</span>
-                </div>`
-              : `<div style="font-size:13px;font-weight:600;color:${s.color};opacity:0.7;margin-top:4px">
-                  <i class="fas fa-arrow-right" style="margin-right:4px"></i>${s.sub}
-                </div>`
-            }
+            <div style="font-size:28px;font-weight:800;color:${s.color};line-height:1">
+              ${s.count.toLocaleString()}<span style="font-size:13px;font-weight:500">件</span>
+            </div>
             ${s.rate !== null ? `
               <div style="margin-top:8px;padding-top:8px;border-top:1px solid ${s.color}33">
                 <div style="font-size:10px;color:var(--gray-400);margin-bottom:2px">${s.rateLabel}</div>
                 <div style="font-size:18px;font-weight:700;color:${s.color}">
                   ${s.rate === '—' ? '<span style="font-size:13px;color:var(--gray-300)">—</span>' : `${s.rate}<span style="font-size:11px">%</span>`}
                 </div>
-              </div>` : s.count !== null ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid ${s.color}33;font-size:10px;color:var(--gray-400)">基準値</div>` : ''}
+              </div>` : `<div style="margin-top:8px;padding-top:8px;border-top:1px solid ${s.color}33;font-size:10px;color:var(--gray-400)">基準値</div>`}
           </div>
           ${i < steps.length - 1 ? `<div style="display:flex;align-items:center;color:var(--gray-300);font-size:18px;flex-shrink:0;align-self:center"><i class="fas fa-chevron-right"></i></div>` : ''}
         `).join('')}
@@ -537,6 +533,8 @@ const StatsPage = {
       const data = await API.stats.allPeriods(this.currentType, filterParams);
       this.allPeriods = data;
       this.renderPeriodsTable(data);
+      // allPeriods セット後にファネルカードも再描画（面接実施数を反映）
+      this.renderFunnelCards();
       await this.renderFunnelTable();
     } catch (err) {
       const msg = `<div class="alert alert-error" style="margin:16px"><i class="fas fa-exclamation-circle"></i><span>${err.message}</span></div>`;
@@ -559,15 +557,20 @@ const StatsPage = {
     wrap.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><span>集計中...</span></div>`;
 
     try {
-      const results = await Promise.all(
+      // スプレッドシート側（応募・書類通過・面接予約）を直近6期間分取得
+      const sheetResults = await Promise.all(
         periods.slice(0, 6).map(p =>
           API.spreadsheet.applicantsCount({ period: this.currentType, value: p.value })
             .then(d => ({ period: p.value, label: p.label, ...d }))
-            .catch(() => ({ period: p.value, label: p.label, count:0, doc_pass_count:0, interview_resv_count:0, cv_count:0 }))
+            .catch(() => ({ period: p.value, label: p.label, count:0, doc_pass_count:0, interview_resv_count:0 }))
         )
       );
 
-      if (!results.length) {
+      // 営業報告側（面接実施数）: this.allPeriods から period キーで引く
+      const salesMap = {};
+      (this.allPeriods || []).forEach(d => { salesMap[d.period] = d.total_interviews || 0; });
+
+      if (!sheetResults.length) {
         wrap.innerHTML = `<div class="empty-state"><i class="fas fa-chart-bar"></i><h3>データがありません</h3></div>`;
         return;
       }
@@ -576,7 +579,7 @@ const StatsPage = {
 
       wrap.innerHTML = `
         <div style="overflow-x:auto">
-          <table style="width:100%;border-collapse:collapse;min-width:640px">
+          <table style="width:100%;border-collapse:collapse;min-width:700px">
             <thead>
               <tr style="background:var(--gray-50)">
                 <th style="padding:10px 14px;font-size:12px;text-align:left;border-bottom:2px solid var(--gray-200)">期間</th>
@@ -586,13 +589,16 @@ const StatsPage = {
                 <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);color:#f59e0b"><i class="fas fa-calendar-check" style="margin-right:4px"></i>面接予約</th>
                 <th style="padding:10px 8px;font-size:11px;text-align:center;border-bottom:2px solid var(--gray-200);color:#f59e0b;background:#fffdf0">書類→予約</th>
                 <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);color:#10b981"><i class="fas fa-clipboard-check" style="margin-right:4px"></i>面接実施</th>
+                <th style="padding:10px 8px;font-size:11px;text-align:center;border-bottom:2px solid var(--gray-200);color:#10b981;background:#f0fdf8">予約→実施</th>
               </tr>
             </thead>
             <tbody>
-              ${results.map(r => {
+              ${sheetResults.map(r => {
                 const isCurrent = r.period === this.currentPeriod;
-                const apply = r.count || 0, doc = r.doc_pass_count || 0;
+                const apply = r.count || 0;
+                const doc   = r.doc_pass_count || 0;
                 const resv  = r.interview_resv_count || 0;
+                const intv  = salesMap[r.period] || 0;
                 return `
                   <tr style="${isCurrent ? 'background:#eff6ff' : ''}">
                     <td style="padding:10px 14px;font-weight:600;font-size:13px;white-space:nowrap">
@@ -604,7 +610,8 @@ const StatsPage = {
                     <td style="padding:8px 8px;text-align:center;font-size:12px;color:#8b5cf6;background:#faf8ff">${pct(doc, apply)}</td>
                     <td style="padding:8px 10px;text-align:center;font-weight:700;font-size:14px;color:#f59e0b">${resv.toLocaleString()}</td>
                     <td style="padding:8px 8px;text-align:center;font-size:12px;color:#f59e0b;background:#fffef5">${pct(resv, doc)}</td>
-                    <td style="padding:8px 10px;text-align:center;font-size:11px;color:#6b7280;font-style:italic">CVR集計タブ参照</td>
+                    <td style="padding:8px 10px;text-align:center;font-weight:700;font-size:14px;color:#10b981">${intv.toLocaleString()}</td>
+                    <td style="padding:8px 8px;text-align:center;font-size:12px;color:#10b981;background:#f5fdfb">${pct(intv, resv)}</td>
                   </tr>`;
               }).join('')}
             </tbody>
@@ -612,7 +619,7 @@ const StatsPage = {
         </div>
         <div style="padding:10px 16px;font-size:11px;color:var(--gray-400);border-top:1px solid var(--gray-100)">
           <i class="fas fa-info-circle" style="margin-right:4px"></i>
-          直近6期間を表示。応募・書類通過・面接予約はスプレッドシート。面接実施はCVR集計タブの営業報告件数を参照。
+          直近6期間を表示。応募・書類通過・面接予約はスプレッドシート。面接実施は営業報告件数。率は前ステップ比。
         </div>`;
     } catch (err) {
       wrap.innerHTML = `<div class="alert alert-error" style="margin:16px"><i class="fas fa-exclamation-circle"></i><span>${err.message}</span></div>`;
