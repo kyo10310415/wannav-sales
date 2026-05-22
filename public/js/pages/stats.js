@@ -455,6 +455,7 @@ const StatsPage = {
     // 面接実施数: this.allPeriods（営業報告ベース）から選択期間の total_interviews を取得
     const periodRow = this.allPeriods.find(d => d.period === this.currentPeriod);
     const intv      = periodRow ? (periodRow.total_interviews || 0) : 0;
+    const noshow    = periodRow ? (periodRow.total_noshow    || 0) : 0;
     const filterNote = this._filterNote();
 
     const pct = (num, base) => base > 0 ? ((num / base) * 100).toFixed(1) : '—';
@@ -475,10 +476,10 @@ const StatsPage = {
           </div>
           ${filterNote ? `<div style="font-size:11px;color:var(--primary);background:#eff6ff;border-radius:6px;padding:2px 10px">${filterNote}</div>` : ''}
         </div>
-        <div style="font-size:12px;color:var(--gray-500)">応募〜面接予約: スプレッドシート　面接実施: 営業報告</div>
+        <div style="font-size:12px;color:var(--gray-500)">応募〜面接予約: スプレッドシート　面接実施: 営業報告（飛び除外）</div>
       </div>
 
-      <div style="display:flex;gap:6px;align-items:stretch;flex-wrap:wrap;margin-bottom:16px">
+      <div style="display:flex;gap:6px;align-items:stretch;flex-wrap:wrap;margin-bottom:12px">
         ${steps.map((s, i) => `
           <div style="flex:1;min-width:120px;background:${s.bg};border-radius:10px;padding:14px 12px;border:1px solid ${s.color}22">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
@@ -500,6 +501,23 @@ const StatsPage = {
           </div>
           ${i < steps.length - 1 ? `<div style="display:flex;align-items:center;color:var(--gray-300);font-size:18px;flex-shrink:0;align-self:center"><i class="fas fa-chevron-right"></i></div>` : ''}
         `).join('')}
+      </div>
+
+      <!-- 飛び件数バナー -->
+      <div style="margin-bottom:16px;background:#fef3f2;border:1px solid #fecaca;border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px;flex:0 0 auto">
+          <div style="width:32px;height:32px;background:#ef4444;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <i class="fas fa-user-slash" style="color:white;font-size:14px"></i>
+          </div>
+          <span style="font-size:12px;font-weight:700;color:#dc2626">飛び（無断キャンセル）</span>
+        </div>
+        <div style="font-size:28px;font-weight:800;color:#dc2626;line-height:1">
+          ${noshow.toLocaleString()}<span style="font-size:13px;font-weight:500">件</span>
+        </div>
+        <div style="font-size:11px;color:#991b1b;flex:1;min-width:180px">
+          面接実施数にはカウントされません。
+          ${(intv + noshow) > 0 ? `（全営業報告 ${(intv + noshow).toLocaleString()}件 中 ${pct(noshow, intv + noshow)}%）` : ''}
+        </div>
       </div>
 
       <div style="background:linear-gradient(135deg,#1e40af,#7c3aed);border-radius:10px;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -566,9 +584,14 @@ const StatsPage = {
         )
       );
 
-      // 営業報告側（面接実施数）: this.allPeriods から period キーで引く
+      // 営業報告側（面接実施数・飛び）: this.allPeriods から period キーで引く
       const salesMap = {};
-      (this.allPeriods || []).forEach(d => { salesMap[d.period] = d.total_interviews || 0; });
+      (this.allPeriods || []).forEach(d => {
+        salesMap[d.period] = {
+          intv:   d.total_interviews || 0,
+          noshow: d.total_noshow     || 0,
+        };
+      });
 
       if (!sheetResults.length) {
         wrap.innerHTML = `<div class="empty-state"><i class="fas fa-chart-bar"></i><h3>データがありません</h3></div>`;
@@ -579,7 +602,7 @@ const StatsPage = {
 
       wrap.innerHTML = `
         <div style="overflow-x:auto">
-          <table style="width:100%;border-collapse:collapse;min-width:700px">
+          <table style="width:100%;border-collapse:collapse;min-width:800px">
             <thead>
               <tr style="background:var(--gray-50)">
                 <th style="padding:10px 14px;font-size:12px;text-align:left;border-bottom:2px solid var(--gray-200)">期間</th>
@@ -590,15 +613,18 @@ const StatsPage = {
                 <th style="padding:10px 8px;font-size:11px;text-align:center;border-bottom:2px solid var(--gray-200);color:#f59e0b;background:#fffdf0">書類→予約</th>
                 <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);color:#10b981"><i class="fas fa-clipboard-check" style="margin-right:4px"></i>面接実施</th>
                 <th style="padding:10px 8px;font-size:11px;text-align:center;border-bottom:2px solid var(--gray-200);color:#10b981;background:#f0fdf8">予約→実施</th>
+                <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);color:#ef4444"><i class="fas fa-user-slash" style="margin-right:4px"></i>飛び</th>
               </tr>
             </thead>
             <tbody>
               ${sheetResults.map(r => {
                 const isCurrent = r.period === this.currentPeriod;
-                const apply = r.count || 0;
-                const doc   = r.doc_pass_count || 0;
-                const resv  = r.interview_resv_count || 0;
-                const intv  = salesMap[r.period] || 0;
+                const apply  = r.count || 0;
+                const doc    = r.doc_pass_count || 0;
+                const resv   = r.interview_resv_count || 0;
+                const sm     = salesMap[r.period] || { intv: 0, noshow: 0 };
+                const intv   = sm.intv;
+                const noshow = sm.noshow;
                 return `
                   <tr style="${isCurrent ? 'background:#eff6ff' : ''}">
                     <td style="padding:10px 14px;font-weight:600;font-size:13px;white-space:nowrap">
@@ -612,6 +638,7 @@ const StatsPage = {
                     <td style="padding:8px 8px;text-align:center;font-size:12px;color:#f59e0b;background:#fffef5">${pct(resv, doc)}</td>
                     <td style="padding:8px 10px;text-align:center;font-weight:700;font-size:14px;color:#10b981">${intv.toLocaleString()}</td>
                     <td style="padding:8px 8px;text-align:center;font-size:12px;color:#10b981;background:#f5fdfb">${pct(intv, resv)}</td>
+                    <td style="padding:8px 10px;text-align:center;font-weight:700;font-size:14px;color:#ef4444">${noshow.toLocaleString()}</td>
                   </tr>`;
               }).join('')}
             </tbody>
@@ -619,7 +646,7 @@ const StatsPage = {
         </div>
         <div style="padding:10px 16px;font-size:11px;color:var(--gray-400);border-top:1px solid var(--gray-100)">
           <i class="fas fa-info-circle" style="margin-right:4px"></i>
-          直近6期間を表示。応募・書類通過・面接予約はスプレッドシート。面接実施は営業報告件数。率は前ステップ比。
+          直近6期間を表示。応募・書類通過・面接予約はスプレッドシート。面接実施は営業報告件数（飛び除外）。飛びは営業報告の結果］飛び＾の件数。率は前ステップ比。
         </div>`;
     } catch (err) {
       wrap.innerHTML = `<div class="alert alert-error" style="margin:16px"><i class="fas fa-exclamation-circle"></i><span>${err.message}</span></div>`;
