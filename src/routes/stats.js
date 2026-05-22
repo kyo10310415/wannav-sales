@@ -184,7 +184,7 @@ router.get('/weekly', authenticateToken, (req, res) => {
 
   const data = db.prepare(`
     SELECT
-      strftime('%Y-W%W', COALESCE(sr.interview_date, sr.created_at)) as period,
+      strftime('%Y-W%W', COALESCE(NULLIF(sr.interview_date,''), sr.created_at)) as period,
       SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
       SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
@@ -215,7 +215,7 @@ router.get('/monthly', authenticateToken, (req, res) => {
 
   const data = db.prepare(`
     SELECT
-      strftime('%Y-%m', COALESCE(sr.interview_date, sr.created_at)) as period,
+      strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), sr.created_at)) as period,
       SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
       SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
@@ -256,10 +256,10 @@ router.get('/summary', authenticateToken, (req, res) => {
   let periodCond = '';
   let periodParams = [];
   if (period === 'week' && value) {
-    periodCond   = `strftime('%Y-W%W', COALESCE(sr.interview_date, sr.created_at)) = ?`;
+    periodCond   = `strftime('%Y-W%W', COALESCE(NULLIF(sr.interview_date,''), sr.created_at)) = ?`;
     periodParams = [value];
   } else if (period === 'month' && value) {
-    periodCond   = `strftime('%Y-%m', COALESCE(sr.interview_date, sr.created_at)) = ?`;
+    periodCond   = `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), sr.created_at)) = ?`;
     periodParams = [value];
   }
 
@@ -367,8 +367,8 @@ router.get('/all-periods', authenticateToken, (req, res) => {
   const baseSQL  = buildBaseSQL('', conditions, withJoin);
 
   const fmt   = type === 'week'
-    ? `strftime('%Y-W%W', COALESCE(sr.interview_date, sr.created_at))`
-    : `strftime('%Y-%m', COALESCE(sr.interview_date, sr.created_at))`;
+    ? `strftime('%Y-W%W', COALESCE(NULLIF(sr.interview_date,''), sr.created_at))`
+    : `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), sr.created_at))`;
   const limit = type === 'week' ? 52 : 24;
 
   const data = db.prepare(`
