@@ -147,8 +147,9 @@ const StatsPage = {
     if (select) this.currentPeriod = select.value;
     // フィルター選択肢を非同期取得・描画
     this._loadFilterOptions();
-    await this.fetchApplicantCount();
+    // fetchApplicantCount・loadCurrentPeriod・loadAllPeriods を並列実行してロード時間を短縮
     await Promise.all([
+      this.fetchApplicantCount(),
       this.loadCurrentPeriod(),
       this.loadAllPeriods(),
     ]);
@@ -263,8 +264,8 @@ const StatsPage = {
   // フィルター読み取り → 集計実行
   async applyAndLoad() {
     this._readFilters();
-    await this.fetchApplicantCount();
     await Promise.all([
+      this.fetchApplicantCount(),
       this.loadCurrentPeriod(),
       this.loadAllPeriods(),
     ]);
@@ -576,12 +577,24 @@ const StatsPage = {
 
     try {
       // スプレッドシート側（応募・書類通過・面接予約）を直近6期間分取得
+      // 現在の期間は fetchApplicantCount() で取得済みのデータを使い、残り5期間だけAPIを叩く
+      const targetPeriods = periods.slice(0, 6);
       const sheetResults = await Promise.all(
-        periods.slice(0, 6).map(p =>
-          API.spreadsheet.applicantsCount({ period: this.currentType, value: p.value })
+        targetPeriods.map(p => {
+          // 現在選択中の期間はキャッシュ済みデータを使う
+          if (p.value === this.currentPeriod && this.applicantCount + this.docPassCount + this.interviewResvCount > 0) {
+            return Promise.resolve({
+              period: p.value,
+              label:  p.label,
+              count:                this.applicantCount,
+              doc_pass_count:       this.docPassCount,
+              interview_resv_count: this.interviewResvCount,
+            });
+          }
+          return API.spreadsheet.applicantsCount({ period: this.currentType, value: p.value })
             .then(d => ({ period: p.value, label: p.label, ...d }))
-            .catch(() => ({ period: p.value, label: p.label, count:0, doc_pass_count:0, interview_resv_count:0 }))
-        )
+            .catch(() => ({ period: p.value, label: p.label, count:0, doc_pass_count:0, interview_resv_count:0 }));
+        })
       );
 
       // 営業報告側（面接実施数・飛び）: this.allPeriods から period キーで引く
@@ -592,9 +605,6 @@ const StatsPage = {
           noshow: d.total_noshow     || 0,
         };
       });
-      console.log('[FunnelTable] allPeriods:', JSON.stringify((this.allPeriods || []).slice(0,3)));
-      console.log('[FunnelTable] salesMap keys:', Object.keys(salesMap).slice(0,6));
-      console.log('[FunnelTable] sheetPeriods:', sheetResults.map(function(r){ return r.period; }));
 
       if (!sheetResults.length) {
         wrap.innerHTML = `<div class="empty-state"><i class="fas fa-chart-bar"></i><h3>データがありません</h3></div>`;
