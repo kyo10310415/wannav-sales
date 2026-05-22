@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { google } = require('googleapis');
 const { authenticateToken } = require('../middleware/auth');
+const db = require('../database');
 
 const SPREADSHEET_ID = '1H0CctpkCJ4PVZ5cf1YYI7_elNwUu0uIcHIHMNTHYHW4';
 const SHEET_NAME = 'アススタ';
@@ -353,17 +354,33 @@ router.get('/applicants/count', authenticateToken, async (req, res) => {
 
     const count = filtered.length;
 
-    // 期間内の各フラグカウント
-    const docPassCount       = filtered.filter(a => a.is_doc_pass).length;
-    const interviewResvCount = filtered.filter(a => a.is_interview_resv).length;
-    const interviewCount     = filtered.filter(a => a.is_interview).length;
-    const cvCount            = filtered.filter(a => a.is_cv).length;
+    // 書類通過: 書類通過列 = TRUE
+    const docPassCount = filtered.filter(a => a.is_doc_pass).length;
+
+    // 面接予約数: applicant_interview_dates テーブルに面接日が入力されているレコード数
+    // applicant_key = email 優先、なければ full_name
+    const interviewDateMap = (() => {
+      const rows = db.prepare(
+        `SELECT applicant_key FROM applicant_interview_dates
+         WHERE interview_date IS NOT NULL AND interview_date != ''`
+      ).all();
+      const set = new Set();
+      rows.forEach(r => set.add(r.applicant_key));
+      return set;
+    })();
+    const interviewResvCount = filtered.filter(a => {
+      const key = (a.email && a.email.trim()) ? a.email.trim() : (a.full_name || '').trim();
+      return key && interviewDateMap.has(key);
+    }).length;
+
+    // interviewCount は廃止（面接実施数 = 営業報告件数で代替するため返さない）
+    const cvCount = filtered.filter(a => a.is_cv).length;
 
     res.json({
       count,
-      doc_pass_count: docPassCount,
+      doc_pass_count:       docPassCount,
       interview_resv_count: interviewResvCount,
-      interview_count: interviewCount,
+      // interview_count は営業報告側（stats API）で管理するため省略
       cv_count: cvCount,
       period,
       value,

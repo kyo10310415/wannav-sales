@@ -236,16 +236,16 @@ router.get('/monthly', authenticateToken, (req, res) => {
 //   クエリパラメータ:
 //     period, value            — 期間絞り込み
 //     applicant_count          — スプレッドシート応募数（ファネル表示用）
-//     interview_count          — スプレッドシート面接実施数（ファネル表示用）
 //     interviewer, gender, age_group,
 //                    monthly_income_range, disposable_income_range,
 //                    job_type, streaming_exp
 //                              — フィルター
 //
-//   CV = 営業報告の契約結果のみカウント（スプレッドシートのCV列は不使用）
+//   面接実施数 = 営業報告が上がっている件数のみ（シートの「面接実施」列は不使用）
+//   CV        = 営業報告の契約結果のみカウント（スプレッドシートのCV列は不使用）
 // ============================================================
 router.get('/summary', authenticateToken, (req, res) => {
-  const { period, value, applicant_count, interview_count } = req.query;
+  const { period, value, applicant_count } = req.query;
 
   // 期間フィルター
   let periodCond = '';
@@ -284,7 +284,7 @@ router.get('/summary', authenticateToken, (req, res) => {
 
   const baseSQL = `FROM ${dedup} ${joinClause} ${whereClause}`;
 
-  // 総面接数
+  // 面接実施数 = 営業報告が上がっている件数（常に営業報告ベース）
   const totalInterviewsRow = db.prepare(
     `SELECT COUNT(*) as count ${baseSQL}`
   ).get(...allParams);
@@ -316,12 +316,7 @@ router.get('/summary', authenticateToken, (req, res) => {
     ORDER BY count DESC
   `).all(...allParams);
 
-  // 面接実施数: シートから渡された値 > 0 なら優先、なければ営業報告件数
-  const interviewFromSheet = parseInt(interview_count) || 0;
-  const totalInterviews = interviewFromSheet > 0
-    ? interviewFromSheet
-    : totalInterviewsRow.count;
-
+  const totalInterviews = totalInterviewsRow.count;
   const totalContracts  = totalContractsRow.count;
   const totalCoolingoff = totalCoolingoffRow.count;
   const appCount        = parseInt(applicant_count) || 0;
@@ -336,16 +331,14 @@ router.get('/summary', authenticateToken, (req, res) => {
   res.json({
     period,
     value,
-    total_interviews:     totalInterviews,
-    interview_from_sheet: interviewFromSheet,
-    interview_from_db:    totalInterviewsRow.count,
-    total_contracts:      totalContracts,
-    total_coolingoff:     totalCoolingoff,
-    coolingoff_rate:      coolingoffRate,
-    applicant_count:      appCount,
-    cvr_interview:        cvrInterview,
-    cvr_applicant:        cvrApplicant,
-    plan_breakdown:       planBreakdown,
+    total_interviews: totalInterviews,
+    total_contracts:  totalContracts,
+    total_coolingoff: totalCoolingoff,
+    coolingoff_rate:  coolingoffRate,
+    applicant_count:  appCount,
+    cvr_interview:    cvrInterview,
+    cvr_applicant:    cvrApplicant,
+    plan_breakdown:   planBreakdown,
   });
 });
 
