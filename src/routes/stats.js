@@ -22,9 +22,26 @@ const DEDUP_SUBQUERY = `(
 ) AS sr`;
 
 // ============================================================
+// 月収・可処分所得の範囲定義
+//   monthly_income_range  : 'lt100k' | 'mid' | 'gte300k'
+//   disposable_income_range: 'lt10k'  | 'mid' | 'gte50k'
+// ============================================================
+const MONTHLY_INCOME_RANGES = [
+  { value: 'lt100k',  label: '100,000円未満',         sql: `CAST(NULLIF(np.monthly_income,'') AS REAL) < 100000` },
+  { value: 'mid',     label: '100,000〜299,999円',     sql: `CAST(NULLIF(np.monthly_income,'') AS REAL) BETWEEN 100000 AND 299999` },
+  { value: 'gte300k', label: '300,000円以上',          sql: `CAST(NULLIF(np.monthly_income,'') AS REAL) >= 300000` },
+];
+const DISPOSABLE_INCOME_RANGES = [
+  { value: 'lt10k',  label: '10,000円未満',            sql: `CAST(NULLIF(np.disposable_income,'') AS REAL) < 10000` },
+  { value: 'mid',    label: '10,000〜49,999円',        sql: `CAST(NULLIF(np.disposable_income,'') AS REAL) BETWEEN 10000 AND 49999` },
+  { value: 'gte50k', label: '50,000円以上',            sql: `CAST(NULLIF(np.disposable_income,'') AS REAL) >= 50000` },
+];
+
+// ============================================================
 // フィルター用ヘルパー
 //   クエリパラメータ: interviewer / gender / age_group /
-//                    income_level / job_type / streaming_exp
+//                    monthly_income_range / disposable_income_range /
+//                    job_type / streaming_exp
 //   性別・年齢・所得層・職種・配信経験は notion_profiles を LEFT JOIN
 // ============================================================
 function buildFilterSQL(query) {
@@ -57,9 +74,15 @@ function buildFilterSQL(query) {
       params.push(range[0], range[1]);
     }
   }
-  if (query.income_level) {
-    conditions.push(`np.monthly_income = ?`);
-    params.push(query.income_level);
+  // 月収（数値範囲）
+  if (query.monthly_income_range) {
+    const def = MONTHLY_INCOME_RANGES.find(r => r.value === query.monthly_income_range);
+    if (def) conditions.push(def.sql);
+  }
+  // 可処分所得（数値範囲）
+  if (query.disposable_income_range) {
+    const def = DISPOSABLE_INCOME_RANGES.find(r => r.value === query.disposable_income_range);
+    if (def) conditions.push(def.sql);
   }
   if (query.job_type) {
     conditions.push(`np.job_type = ?`);
@@ -75,7 +98,8 @@ function buildFilterSQL(query) {
 
 // Notionが絡むフィルターがあるか判定
 function needsNotionJoin(query) {
-  return !!(query.gender || query.age_group || query.income_level ||
+  return !!(query.gender || query.age_group ||
+            query.monthly_income_range || query.disposable_income_range ||
             query.job_type || query.streaming_exp);
 }
 
@@ -126,12 +150,6 @@ router.get('/filter-options', authenticateToken, (req, res) => {
      ORDER BY gender`
   ).all().map(r => r.gender);
 
-  const incomes = db.prepare(
-    `SELECT DISTINCT monthly_income FROM notion_profiles
-     WHERE monthly_income IS NOT NULL AND monthly_income != ''
-     ORDER BY monthly_income`
-  ).all().map(r => r.monthly_income);
-
   const jobTypes = db.prepare(
     `SELECT DISTINCT job_type FROM notion_profiles
      WHERE job_type IS NOT NULL AND job_type != ''
@@ -147,10 +165,11 @@ router.get('/filter-options', authenticateToken, (req, res) => {
   res.json({
     interviewers,
     genders,
-    age_groups: ['10代', '20代', '30代', '40代', '50代以上'],
-    income_levels: incomes,
-    job_types:     jobTypes,
-    streaming_exps: streamingExps,
+    age_groups:              ['10代', '20代', '30代', '40代', '50代以上'],
+    monthly_income_ranges:   MONTHLY_INCOME_RANGES.map(r => ({ value: r.value, label: r.label })),
+    disposable_income_ranges: DISPOSABLE_INCOME_RANGES.map(r => ({ value: r.value, label: r.label })),
+    job_types:               jobTypes,
+    streaming_exps:          streamingExps,
   });
 });
 
@@ -218,7 +237,9 @@ router.get('/monthly', authenticateToken, (req, res) => {
 //     period, value            — 期間絞り込み
 //     applicant_count          — スプレッドシート応募数（ファネル表示用）
 //     interview_count          — スプレッドシート面接実施数（ファネル表示用）
-//     interviewer, gender, age_group, income_level, job_type, streaming_exp
+//     interviewer, gender, age_group,
+//                    monthly_income_range, disposable_income_range,
+//                    job_type, streaming_exp
 //                              — フィルター
 //
 //   CV = 営業報告の契約結果のみカウント（スプレッドシートのCV列は不使用）
