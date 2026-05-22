@@ -191,6 +191,7 @@ router.get('/weekly', authenticateToken, (req, res) => {
       SUM(CASE WHEN ${NOSHOW_CONDITION}       THEN 1 ELSE 0 END) as total_noshow
     ${baseSQL}
     GROUP BY period
+    HAVING period IS NOT NULL
     ORDER BY period DESC
     LIMIT 24
   `).all(...params);
@@ -221,6 +222,7 @@ router.get('/monthly', authenticateToken, (req, res) => {
       SUM(CASE WHEN ${NOSHOW_CONDITION}       THEN 1 ELSE 0 END) as total_noshow
     ${baseSQL}
     GROUP BY period
+    HAVING period IS NOT NULL
     ORDER BY period DESC
     LIMIT 24
   `).all(...params);
@@ -378,6 +380,7 @@ router.get('/all-periods', authenticateToken, (req, res) => {
       SUM(CASE WHEN ${NOSHOW_CONDITION}       THEN 1 ELSE 0 END) as total_noshow
     ${baseSQL}
     GROUP BY period
+    HAVING period IS NOT NULL
     ORDER BY period DESC
     LIMIT ${limit}
   `).all(...params);
