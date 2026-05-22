@@ -592,6 +592,9 @@ const StatsPage = {
           noshow: d.total_noshow     || 0,
         };
       });
+      console.log('[FunnelTable] allPeriods:', JSON.stringify(this.allPeriods?.slice(0,3)));
+      console.log('[FunnelTable] salesMap keys:', Object.keys(salesMap).slice(0,6));
+      console.log('[FunnelTable] sheetPeriods:', sheetResults.map(r => r.period));
 
       if (!sheetResults.length) {
         wrap.innerHTML = `<div class="empty-state"><i class="fas fa-chart-bar"></i><h3>データがありません</h3></div>`;
