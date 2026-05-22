@@ -167,13 +167,11 @@ const API = {
 
   // Stats
   stats: {
-    weekly: () => API.get('/stats/weekly'),
-    monthly: () => API.get('/stats/monthly'),
-    allPeriods: (type) => API.get(`/stats/all-periods?type=${type}`),
-    summary: (params) => {
-      const q = new URLSearchParams(params).toString();
-      return API.get(`/stats/summary?${q}`);
-    },
+    weekly:        (params = {}) => { const q = new URLSearchParams(params).toString(); return API.get(`/stats/weekly${q ? '?' + q : ''}`); },
+    monthly:       (params = {}) => { const q = new URLSearchParams(params).toString(); return API.get(`/stats/monthly${q ? '?' + q : ''}`); },
+    allPeriods:    (type, params = {}) => { const q = new URLSearchParams({ type, ...params }).toString(); return API.get(`/stats/all-periods?${q}`); },
+    summary:       (params) => { const q = new URLSearchParams(params).toString(); return API.get(`/stats/summary?${q}`); },
+    filterOptions: () => API.get('/stats/filter-options'),
   },
 
   // Data Analysis
