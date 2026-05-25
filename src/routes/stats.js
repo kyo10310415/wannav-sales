@@ -15,7 +15,7 @@ const NOSHOW_CONDITION     = `result = '飛び'`;
 // ISO 8601 週番号式（月曜始まり）
 //   strftime('%W') は日曜始まりで FE の週番号と1週ずれるため
 //   julianday + 木曜日基準 で ISO 週番号を計算する
-//   col: 日付列の式（例: COALESCE(NULLIF(sr.interview_date,''), sr.created_at)）
+//   col: 日付列の式（例: COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at,'+9 hours'))）
 // ============================================================
 function isoWeekPeriod(col) {
   return `(
@@ -207,7 +207,7 @@ router.get('/weekly', authenticateToken, (req, res) => {
   const withJoin = needsNotionJoin(req.query);
   const baseSQL  = buildBaseSQL('', conditions, withJoin);
 
-  const weekFmt = isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), sr.created_at)`);
+  const weekFmt = isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))`);
 
   const data = db.prepare(`
     SELECT
@@ -242,7 +242,7 @@ router.get('/monthly', authenticateToken, (req, res) => {
 
   const data = db.prepare(`
     SELECT
-      strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), sr.created_at)) as period,
+      strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))) as period,
       SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
       SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
@@ -283,10 +283,10 @@ router.get('/summary', authenticateToken, (req, res) => {
   let periodCond = '';
   let periodParams = [];
   if (period === 'week' && value) {
-    periodCond   = `${isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), sr.created_at)`)} = ?`;
+    periodCond   = `${isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))`)} = ?`;
     periodParams = [value];
   } else if (period === 'month' && value) {
-    periodCond   = `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), sr.created_at)) = ?`;
+    periodCond   = `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))) = ?`;
     periodParams = [value];
   }
 
@@ -394,8 +394,8 @@ router.get('/all-periods', authenticateToken, (req, res) => {
   const baseSQL  = buildBaseSQL('', conditions, withJoin);
 
   const fmt   = type === 'week'
-    ? isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), sr.created_at)`)
-    : `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), sr.created_at))`;
+    ? isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))`)
+    : `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours')))`;
   const limit = type === 'week' ? 52 : 24;
 
   const data = db.prepare(`
