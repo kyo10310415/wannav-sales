@@ -14,7 +14,12 @@ const ApplicantsPage = {
   filterResult: '',
   filterDateFrom: '',
   filterDateTo: '',
+  filterInterviewDateFrom: '',
+  filterInterviewDateTo: '',
+  filterInterviewer: '',
+  filterReportResult: '',
   filterNoInterviewDate: false,
+  filterHasInterviewDate: false,
   sortCol: null,
   sortDir: 'desc',
 
@@ -70,7 +75,7 @@ const ApplicantsPage = {
                 <input type="date" id="filter-date-to" class="form-control" style="width:140px">
               </div>
               <div>
-                <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:4px">営業報告の結果</div>
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:4px">応募者の状況</div>
                 <select id="filter-result" class="form-control" style="width:130px">
                   <option value="">すべて</option>
                   <option value="contract">契約のみ</option>
@@ -91,6 +96,47 @@ const ApplicantsPage = {
                 </button>
               </div>
               <span id="applicant-count" style="font-size:13px;color:var(--gray-500);align-self:center;margin-left:auto;white-space:nowrap"></span>
+            </div>
+            <!-- 2行目: 詳細フィルター（面接日・担当者・報告結果） -->
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-100)">
+              <div style="display:flex;align-items:center;gap:6px;align-self:center">
+                <i class="fas fa-filter" style="font-size:11px;color:var(--gray-400)"></i>
+                <span style="font-size:11px;font-weight:600;color:var(--gray-500)">詳細絞り込み</span>
+              </div>
+              <div>
+                <div style="font-size:11px;font-weight:600;color:#7c3aed;margin-bottom:4px"><i class="fas fa-calendar-alt" style="margin-right:3px"></i>面接日 From</div>
+                <input type="date" id="filter-interview-date-from" class="form-control" style="width:140px;border-color:#c4b5fd">
+              </div>
+              <div>
+                <div style="font-size:11px;font-weight:600;color:#7c3aed;margin-bottom:4px"><i class="fas fa-calendar-alt" style="margin-right:3px"></i>面接日 To</div>
+                <input type="date" id="filter-interview-date-to" class="form-control" style="width:140px;border-color:#c4b5fd">
+              </div>
+              <div>
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:4px"><i class="fas fa-user-tie" style="margin-right:3px"></i>担当者</div>
+                <select id="filter-interviewer" class="form-control" style="width:130px">
+                  <option value="">すべて</option>
+                </select>
+              </div>
+              <div>
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:4px"><i class="fas fa-clipboard-check" style="margin-right:3px"></i>営業報告の結果</div>
+                <select id="filter-report-result" class="form-control" style="width:140px">
+                  <option value="">すべて</option>
+                  <option value="契約">契約</option>
+                  <option value="契約＆職業案内">契約＆職業案内</option>
+                  <option value="クーリングオフ">クーリングオフ</option>
+                  <option value="飛び">飛び（無断キャンセル）</option>
+                  <option value="保留">保留</option>
+                  <option value="NG">NG</option>
+                  <option value="その他">その他</option>
+                </select>
+              </div>
+              <div>
+                <button class="btn btn-sm" id="filter-has-date-btn"
+                  onclick="ApplicantsPage.toggleHasDateFilter()"
+                  style="margin-top:auto;background:#7c3aed;border-color:#7c3aed;color:white;white-space:nowrap;opacity:0.7">
+                  <i class="fas fa-calendar-check"></i> 面接日入力済み
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -129,6 +175,26 @@ const ApplicantsPage = {
       this.currentPage = 1;
       this.filterAndRender();
     });
+    document.getElementById('filter-interview-date-from').addEventListener('change', (e) => {
+      this.filterInterviewDateFrom = e.target.value;
+      this.currentPage = 1;
+      this.filterAndRender();
+    });
+    document.getElementById('filter-interview-date-to').addEventListener('change', (e) => {
+      this.filterInterviewDateTo = e.target.value;
+      this.currentPage = 1;
+      this.filterAndRender();
+    });
+    document.getElementById('filter-interviewer').addEventListener('change', (e) => {
+      this.filterInterviewer = e.target.value;
+      this.currentPage = 1;
+      this.filterAndRender();
+    });
+    document.getElementById('filter-report-result').addEventListener('change', (e) => {
+      this.filterReportResult = e.target.value;
+      this.currentPage = 1;
+      this.filterAndRender();
+    });
     await this.loadData();
   },
 
@@ -157,6 +223,7 @@ const ApplicantsPage = {
       };
       this.error = null;
       this.renderCacheBadge();
+      this._populateInterviewerSelect();
       this.filterAndRender();
     } catch (err) {
       this.error = err.message;
@@ -264,22 +331,49 @@ const ApplicantsPage = {
     } catch (e) {}
   },
 
+  // 担当者セレクトの選択肢をレポートデータから生成
+  _populateInterviewerSelect() {
+    const sel = document.getElementById('filter-interviewer');
+    if (!sel) return;
+    const names = [...new Set(this.reports.map(r => r.interviewer_name).filter(Boolean))].sort();
+    const current = sel.value;
+    sel.innerHTML = '<option value="">すべて</option>' +
+      names.map(n => `<option value="${Utils.escHtml(n)}"${n === current ? ' selected' : ''}>${Utils.escHtml(n)}</option>`).join('');
+  },
+
   toggleNoDateFilter() {
     this.filterNoInterviewDate = !this.filterNoInterviewDate;
+    if (this.filterNoInterviewDate) this.filterHasInterviewDate = false;
     this.currentPage = 1;
-    // ボタンの見た目をトグル
     const btn = document.getElementById('filter-no-date-btn');
     if (btn) {
       if (this.filterNoInterviewDate) {
-        btn.style.background = '#d97706';
-        btn.style.borderColor = '#d97706';
-        btn.style.boxShadow = '0 0 0 3px rgba(245,158,11,0.35)';
+        btn.style.background = '#d97706'; btn.style.borderColor = '#d97706';
+        btn.style.boxShadow = '0 0 0 3px rgba(245,158,11,0.35)'; btn.style.opacity = '1';
       } else {
-        btn.style.background = '#f59e0b';
-        btn.style.borderColor = '#f59e0b';
-        btn.style.boxShadow = '';
+        btn.style.background = '#f59e0b'; btn.style.borderColor = '#f59e0b';
+        btn.style.boxShadow = ''; btn.style.opacity = '1';
       }
     }
+    const btn2 = document.getElementById('filter-has-date-btn');
+    if (btn2) { btn2.style.opacity = '0.7'; btn2.style.boxShadow = ''; }
+    this.filterAndRender();
+  },
+
+  toggleHasDateFilter() {
+    this.filterHasInterviewDate = !this.filterHasInterviewDate;
+    if (this.filterHasInterviewDate) this.filterNoInterviewDate = false;
+    this.currentPage = 1;
+    const btn = document.getElementById('filter-has-date-btn');
+    if (btn) {
+      if (this.filterHasInterviewDate) {
+        btn.style.opacity = '1'; btn.style.boxShadow = '0 0 0 3px rgba(124,58,237,0.35)';
+      } else {
+        btn.style.opacity = '0.7'; btn.style.boxShadow = '';
+      }
+    }
+    const btn2 = document.getElementById('filter-no-date-btn');
+    if (btn2) { btn2.style.background = '#f59e0b'; btn2.style.borderColor = '#f59e0b'; btn2.style.boxShadow = ''; }
     this.filterAndRender();
   },
 
@@ -288,24 +382,27 @@ const ApplicantsPage = {
     this.filterDateFrom = '';
     this.filterDateTo = '';
     this.filterResult = '';
+    this.filterInterviewDateFrom = '';
+    this.filterInterviewDateTo = '';
+    this.filterInterviewer = '';
+    this.filterReportResult = '';
     this.filterNoInterviewDate = false;
+    this.filterHasInterviewDate = false;
     this.sortCol = null;
     this.sortDir = 'desc';
     this.currentPage = 1;
-    const s = document.getElementById('applicant-search');
-    if (s) s.value = '';
-    const df = document.getElementById('filter-date-from');
-    if (df) df.value = '';
-    const dt = document.getElementById('filter-date-to');
-    if (dt) dt.value = '';
-    const fr = document.getElementById('filter-result');
-    if (fr) fr.value = '';
+    const s = document.getElementById('applicant-search'); if (s) s.value = '';
+    const df = document.getElementById('filter-date-from'); if (df) df.value = '';
+    const dt = document.getElementById('filter-date-to'); if (dt) dt.value = '';
+    const fr = document.getElementById('filter-result'); if (fr) fr.value = '';
+    const idf = document.getElementById('filter-interview-date-from'); if (idf) idf.value = '';
+    const idt = document.getElementById('filter-interview-date-to'); if (idt) idt.value = '';
+    const iv = document.getElementById('filter-interviewer'); if (iv) iv.value = '';
+    const rr = document.getElementById('filter-report-result'); if (rr) rr.value = '';
     const btn = document.getElementById('filter-no-date-btn');
-    if (btn) {
-      btn.style.background = '#f59e0b';
-      btn.style.borderColor = '#f59e0b';
-      btn.style.boxShadow = '';
-    }
+    if (btn) { btn.style.background = '#f59e0b'; btn.style.borderColor = '#f59e0b'; btn.style.boxShadow = ''; }
+    const btn2 = document.getElementById('filter-has-date-btn');
+    if (btn2) { btn2.style.opacity = '0.7'; btn2.style.boxShadow = ''; }
     this.filterAndRender();
   },
 
@@ -364,6 +461,48 @@ const ApplicantsPage = {
         const key = this._applicantKey(a);
         const dateVal = this.interviewDates[key];
         return !dateVal || dateVal.trim() === '';
+      });
+    }
+
+    // 面接日入力済みフィルター
+    if (this.filterHasInterviewDate) {
+      list = list.filter(a => {
+        const key = this._applicantKey(a);
+        const dateVal = this.interviewDates[key];
+        return dateVal && dateVal.trim() !== '';
+      });
+    }
+
+    // 面接日 From/To フィルター
+    if (this.filterInterviewDateFrom) {
+      list = list.filter(a => {
+        const key = this._applicantKey(a);
+        const d = this.interviewDates[key];
+        return d && d >= this.filterInterviewDateFrom;
+      });
+    }
+    if (this.filterInterviewDateTo) {
+      list = list.filter(a => {
+        const key = this._applicantKey(a);
+        const d = this.interviewDates[key];
+        return d && d <= this.filterInterviewDateTo;
+      });
+    }
+
+    // 担当者フィルター
+    if (this.filterInterviewer) {
+      list = list.filter(a => {
+        const report = this.getReportForApplicant(a);
+        return report && report.interviewer_name === this.filterInterviewer;
+      });
+    }
+
+    // 営業報告の結果フィルター（詳細）
+    if (this.filterReportResult) {
+      list = list.filter(a => {
+        const report = this.getReportForApplicant(a);
+        if (!report) return false;
+        return (report.result || '').includes(this.filterReportResult);
       });
     }
 
@@ -444,11 +583,15 @@ const ApplicantsPage = {
     const { items } = Utils.paginate(this.filteredApplicants, this.currentPage, this.perPage);
 
     if (!this.filteredApplicants.length) {
+      const hasFilter = this.searchQuery || this.filterDateFrom || this.filterDateTo ||
+        this.filterResult || this.filterInterviewDateFrom || this.filterInterviewDateTo ||
+        this.filterInterviewer || this.filterReportResult ||
+        this.filterHasInterviewDate || this.filterNoInterviewDate;
       wrap.innerHTML = `
         <div class="empty-state">
           <i class="fas fa-user-slash"></i>
-          <h3>${this.searchQuery || this.filterDateFrom || this.filterDateTo || this.filterResult ? '条件に一致するデータがありません' : '応募者データがありません'}</h3>
-          <p>${this.searchQuery || this.filterDateFrom || this.filterDateTo || this.filterResult ? 'フィルター条件を変更してください' : 'スプレッドシートを確認してください'}</p>
+          <h3>${hasFilter ? '条件に一致するデータがありません' : '応募者データがありません'}</h3>
+          <p>${hasFilter ? 'フィルター条件を変更してください' : 'スプレッドシートを確認してください'}</p>
         </div>`;
       return;
     }
