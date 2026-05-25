@@ -12,6 +12,31 @@ const COOLINGOFF_CONDITION = `result = 'クーリングオフ'`;
 const NOSHOW_CONDITION     = `result = '飛び'`;
 
 // ============================================================
+// ISO 8601 週番号式（月曜始まり）
+//   strftime('%W') は日曜始まりで FE の週番号と1週ずれるため
+//   julianday + 木曜日基準 で ISO 週番号を計算する
+//   col: 日付列の式（例: COALESCE(NULLIF(sr.interview_date,''), sr.created_at)）
+// ============================================================
+function isoWeekPeriod(col) {
+  return `(
+    strftime('%Y', date(${col}, (3 - (CAST(strftime('%w', ${col}) AS INTEGER) + 6) % 7) || ' days'))
+    || '-W' ||
+    printf('%02d', CAST(
+      (julianday(date(${col}, (3 - (CAST(strftime('%w', ${col}) AS INTEGER) + 6) % 7) || ' days'))
+       - julianday(
+           date(
+             strftime('%Y', date(${col}, (3 - (CAST(strftime('%w', ${col}) AS INTEGER) + 6) % 7) || ' days')) || '-01-04',
+             (3 - (CAST(strftime('%w',
+               strftime('%Y', date(${col}, (3 - (CAST(strftime('%w', ${col}) AS INTEGER) + 6) % 7) || ' days')) || '-01-04'
+             ) AS INTEGER) + 6) % 7) || ' days'
+           )
+         )
+      ) / 7 + 1 AS INTEGER)
+    )
+  )`;
+}
+
+// ============================================================
 // 重複除外サブクエリ（氏名+メール複合キー、フォールバックあり）
 // ============================================================
 const DEDUP_SUBQUERY = `(
@@ -182,9 +207,11 @@ router.get('/weekly', authenticateToken, (req, res) => {
   const withJoin = needsNotionJoin(req.query);
   const baseSQL  = buildBaseSQL('', conditions, withJoin);
 
+  const weekFmt = isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), sr.created_at)`);
+
   const data = db.prepare(`
     SELECT
-      strftime('%Y-W%W', COALESCE(NULLIF(sr.interview_date,''), sr.created_at)) as period,
+      ${weekFmt} as period,
       SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
       SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
@@ -256,7 +283,7 @@ router.get('/summary', authenticateToken, (req, res) => {
   let periodCond = '';
   let periodParams = [];
   if (period === 'week' && value) {
-    periodCond   = `strftime('%Y-W%W', COALESCE(NULLIF(sr.interview_date,''), sr.created_at)) = ?`;
+    periodCond   = `${isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), sr.created_at)`)} = ?`;
     periodParams = [value];
   } else if (period === 'month' && value) {
     periodCond   = `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), sr.created_at)) = ?`;
@@ -367,7 +394,7 @@ router.get('/all-periods', authenticateToken, (req, res) => {
   const baseSQL  = buildBaseSQL('', conditions, withJoin);
 
   const fmt   = type === 'week'
-    ? `strftime('%Y-W%W', COALESCE(NULLIF(sr.interview_date,''), sr.created_at))`
+    ? isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), sr.created_at)`)
     : `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), sr.created_at))`;
   const limit = type === 'week' ? 52 : 24;
 
