@@ -67,54 +67,61 @@ const Utils = {
     };
   },
 
-  // YYYY-WXX の value からその週の月曜日(Date)を返す
-  _weekMonday(weekStr) {
-    // weekStr: '2026-W15'
-    const [yearStr, wPart] = weekStr.split('-W');
-    const year = parseInt(yearStr);
-    const week = parseInt(wPart);
-    // 1月1日から week 番目の週の月曜日を計算
-    // SQLiteの strftime('%W') は日曜始まり週番号なので合わせる
-    const jan1 = new Date(year, 0, 1);
-    // jan1 の曜日(0=日,1=月,...)
-    const jan1Day = jan1.getDay(); // 0=Sun
-    // 第1週の開始日（その年の最初の日曜日）
-    const firstSunday = new Date(jan1);
-    firstSunday.setDate(1 - jan1Day); // jan1 が日曜なら同日、月曜なら -1 日
-    // week 番目の週の日曜日
-    const weekSunday = new Date(firstSunday);
-    weekSunday.setDate(firstSunday.getDate() + (week - 1) * 7);
-    // 月曜日 = 日曜+1
-    const monday = new Date(weekSunday);
-    monday.setDate(weekSunday.getDate() + 1);
-    // 土曜日 = 日曜+7
-    const saturday = new Date(weekSunday);
-    saturday.setDate(weekSunday.getDate() + 7);
-    return { monday, saturday, sunday: weekSunday };
+  // Date から ISO 8601 週番号文字列 (YYYY-WXX) を返す
+  // ISO 8601: 月曜始まり、1/4 が含まれる週が W01
+  // SQLite の isoWeekPeriod() と完全一致
+  _isoWeekStr(d) {
+    const date = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0);
+    const monBased = (date.getDay() + 6) % 7; // 月=0, 火=1, ..., 日=6
+    const thu = new Date(date);
+    thu.setDate(date.getDate() + 3 - monBased); // 当週の木曜日
+    const year = thu.getFullYear();
+    const jan4 = new Date(year, 0, 4, 12, 0, 0);
+    const jan4MonBased = (jan4.getDay() + 6) % 7;
+    const yearFirstThu = new Date(year, 0, 4 + (3 - jan4MonBased), 12, 0, 0);
+    const week = Math.round((thu - yearFirstThu) / (7 * 86400000)) + 1;
+    return year + '-W' + String(week).padStart(2, '0');
   },
 
-  // YYYY-WXX から「〇月〇日（月）～〇月〇日（日）」の表示ラベルを生成
+  // YYYY-WXX の value からその週の月曜日(Date)を返す
+  // ISO 8601 準拠: 1/4 が含まれる週が W01、月曜〜日曜
+  _weekMonday(weekStr) {
+    // weekStr: '2026-W21'
+    const [yearStr, wPart] = weekStr.split('-W');
+    const year  = parseInt(yearStr);
+    const week  = parseInt(wPart);
+    // その年の W01 の月曜日 = 1/4 が含まれる週の月曜日
+    const jan4       = new Date(year, 0, 4, 12, 0, 0);
+    const jan4MonBased = (jan4.getDay() + 6) % 7; // 月=0
+    const w01Monday  = new Date(year, 0, 4 - jan4MonBased, 12, 0, 0);
+    // 指定週の月曜日
+    const monday = new Date(w01Monday);
+    monday.setDate(w01Monday.getDate() + (week - 1) * 7);
+    // 日曜日 = 月曜+6
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { monday, sunday };
+  },
+
+  // YYYY-WXX から「YYYY年 M月D日（月）〜M月D日（日）」の表示ラベルを生成
   weekRangeLabel(weekStr) {
     if (!weekStr) return '';
     try {
-      const { monday, saturday } = this._weekMonday(weekStr);
+      const { monday, sunday } = this._weekMonday(weekStr);
       const fmt = (d) => `${d.getMonth() + 1}月${d.getDate()}日`;
       const [yearStr] = weekStr.split('-W');
-      return `${yearStr}年 ${fmt(monday)}〜${fmt(saturday)}`;
+      return `${yearStr}年 ${fmt(monday)}〜${fmt(sunday)}`;
     } catch { return weekStr; }
   },
 
-  // Get week periods for last N weeks
+  // Get week periods for last N weeks (ISO 8601: 月曜始まり)
   getRecentWeeks(n = 12) {
     const weeks = [];
     const now = new Date();
     for (let i = 0; i < n; i++) {
       const d = new Date(now);
       d.setDate(d.getDate() - i * 7);
-      const year = d.getFullYear();
-      const startOfYear = new Date(year, 0, 1);
-      const weekNum = Math.ceil(((d - startOfYear) / 86400000 + startOfYear.getDay() + 1) / 7);
-      const weekStr = `${year}-W${String(weekNum).padStart(2, '0')}`;
+      const weekStr = this._isoWeekStr(d);
       if (!weeks.find(w => w.value === weekStr)) {
         weeks.push({ value: weekStr, label: this.weekRangeLabel(weekStr) });
       }
