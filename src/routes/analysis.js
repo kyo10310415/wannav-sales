@@ -90,11 +90,13 @@ function callGemini(systemPrompt, userMessage, apiKey) {
       },
     };
     const req = https.request(options, (resp) => {
-      let data = '';
-      resp.on('data', chunk => { data += chunk; });
+      const chunks = [];
+      resp.on('data', chunk => { chunks.push(chunk); });
       resp.on('end', () => {
-        try { resolve({ status: resp.statusCode, body: JSON.parse(data) }); }
-        catch (e) { reject(new Error('Gemini JSONパース失敗: ' + data.slice(0, 300))); }
+        try {
+          const data = Buffer.concat(chunks).toString('utf8');
+          resolve({ status: resp.statusCode, body: JSON.parse(data) });
+        } catch (e) { reject(new Error('Gemini JSONパース失敗')); }
       });
     });
     req.on('error', reject);

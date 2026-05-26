@@ -15,7 +15,7 @@ const NOSHOW_CONDITION     = `result = '飛び'`;
 // ISO 8601 週番号式（月曜始まり）
 //   strftime('%W') は日曜始まりで FE の週番号と1週ずれるため
 //   julianday + 木曜日基準 で ISO 週番号を計算する
-//   col: 日付列の式（例: COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at,'+9 hours'))）
+//   col: 日付列の式（例: COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at,'+9 hours'))）
 // ============================================================
 function isoWeekPeriod(col) {
   return `(
@@ -38,13 +38,23 @@ function isoWeekPeriod(col) {
 
 // ============================================================
 // 重複除外サブクエリ（氏名+メール複合キー、フォールバックあり）
+//   MAX(id): 最新レコードを残す
+//   first_created_at: 同一人物の初回登録日時（MIN(created_at)）
+//     → interview_date が空欄の場合のフォールバック日付として使用
+//     → 後から報告を更新しても「最初に登録した週」に集計されるよう保証
 // ============================================================
 const DEDUP_SUBQUERY = `(
-  SELECT * FROM sales_reports
-  WHERE id IN (
-    SELECT MAX(id) FROM sales_reports
-    GROUP BY COALESCE(NULLIF(applicant_name_email,''), applicant_full_name)
-  )
+  SELECT sr.*,
+         g.first_created_at
+  FROM sales_reports sr
+  JOIN (
+    SELECT
+      COALESCE(NULLIF(applicant_name_email,''), applicant_full_name) AS dedup_key,
+      MAX(id)         AS max_id,
+      MIN(created_at) AS first_created_at
+    FROM sales_reports
+    GROUP BY dedup_key
+  ) AS g ON sr.id = g.max_id
 ) AS sr`;
 
 // ============================================================
@@ -141,12 +151,19 @@ function buildBaseSQL(periodFilter, filterConds, withJoin) {
     : '';
 
   // 重複除外サブクエリ（period filter はサブクエリ外に適用）
+  // first_created_at: 同一人物の初回登録日時（interview_date 空欄時のフォールバック）
   const dedup = `(
-    SELECT * FROM sales_reports
-    WHERE id IN (
-      SELECT MAX(id) FROM sales_reports
-      GROUP BY COALESCE(NULLIF(applicant_name_email,''), applicant_full_name)
-    )
+    SELECT sr.*,
+           g.first_created_at
+    FROM sales_reports sr
+    JOIN (
+      SELECT
+        COALESCE(NULLIF(applicant_name_email,''), applicant_full_name) AS dedup_key,
+        MAX(id)         AS max_id,
+        MIN(created_at) AS first_created_at
+      FROM sales_reports
+      GROUP BY dedup_key
+    ) AS g ON sr.id = g.max_id
   ) AS sr`;
 
   const allConds = [];
@@ -207,7 +224,7 @@ router.get('/weekly', authenticateToken, (req, res) => {
   const withJoin = needsNotionJoin(req.query);
   const baseSQL  = buildBaseSQL('', conditions, withJoin);
 
-  const weekFmt = isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))`);
+  const weekFmt = isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))`);
 
   const data = db.prepare(`
     SELECT
@@ -242,7 +259,7 @@ router.get('/monthly', authenticateToken, (req, res) => {
 
   const data = db.prepare(`
     SELECT
-      strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))) as period,
+      strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))) as period,
       SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
       SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
@@ -283,10 +300,10 @@ router.get('/summary', authenticateToken, (req, res) => {
   let periodCond = '';
   let periodParams = [];
   if (period === 'week' && value) {
-    periodCond   = `${isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))`)} = ?`;
+    periodCond   = `${isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))`)} = ?`;
     periodParams = [value];
   } else if (period === 'month' && value) {
-    periodCond   = `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))) = ?`;
+    periodCond   = `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))) = ?`;
     periodParams = [value];
   }
 
@@ -299,12 +316,19 @@ router.get('/summary', authenticateToken, (req, res) => {
   if (periodCond)        allConds.push(periodCond);
   allConds.push(...filterConds);
 
+  // first_created_at: 同一人物の初回登録日時（interview_date 空欄時のフォールバック）
   const dedup = `(
-    SELECT * FROM sales_reports
-    WHERE id IN (
-      SELECT MAX(id) FROM sales_reports
-      GROUP BY COALESCE(NULLIF(applicant_name_email,''), applicant_full_name)
-    )
+    SELECT sr.*,
+           g.first_created_at
+    FROM sales_reports sr
+    JOIN (
+      SELECT
+        COALESCE(NULLIF(applicant_name_email,''), applicant_full_name) AS dedup_key,
+        MAX(id)         AS max_id,
+        MIN(created_at) AS first_created_at
+      FROM sales_reports
+      GROUP BY dedup_key
+    ) AS g ON sr.id = g.max_id
   ) AS sr`;
   const joinClause = withJoin
     ? `LEFT JOIN notion_profiles np ON np.student_number = sr.student_number`
@@ -394,8 +418,8 @@ router.get('/all-periods', authenticateToken, (req, res) => {
   const baseSQL  = buildBaseSQL('', conditions, withJoin);
 
   const fmt   = type === 'week'
-    ? isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours'))`)
-    : `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.created_at, '+9 hours')))`;
+    ? isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))`)
+    : `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours')))`;
   const limit = type === 'week' ? 52 : 24;
 
   const data = db.prepare(`

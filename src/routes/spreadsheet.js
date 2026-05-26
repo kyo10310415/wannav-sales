@@ -106,6 +106,21 @@ function parseApplicantDate(dateStr) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// ISO 8601 週番号を返す（utils.js の _isoWeekStr と同実装）
+// 月曜始まり・木曜日基準、stats.js の isoWeekPeriod() SQL式と一致
+function _isoWeekStr(d) {
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0);
+  const monBased = (date.getDay() + 6) % 7; // 月=0 ... 日=6
+  const thu = new Date(date);
+  thu.setDate(date.getDate() + 3 - monBased); // 当週の木曜日
+  const year = thu.getFullYear();
+  const jan4 = new Date(year, 0, 4, 12, 0, 0);
+  const jan4MonBased = (jan4.getDay() + 6) % 7;
+  const yearFirstThu = new Date(year, 0, 4 + (3 - jan4MonBased), 12, 0, 0);
+  const week = Math.round((thu - yearFirstThu) / (7 * 86400000)) + 1;
+  return year + '-W' + String(week).padStart(2, '0');
+}
+
 function isInPeriod(dateStr, period, value) {
   if (!period || !value || !dateStr) return true;
   const d = parseApplicantDate(dateStr);
@@ -115,13 +130,9 @@ function isInPeriod(dateStr, period, value) {
     const [year, month] = value.split('-');
     return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
   } else if (period === 'week') {
-    const [yearStr, weekStr] = value.split('-W');
-    const targetYear = parseInt(yearStr);
-    const targetWeek = parseInt(weekStr);
-    const startOfYear = new Date(targetYear, 0, 1);
-    const dayOfYear = Math.floor((d - startOfYear) / 86400000);
-    const weekNum = Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
-    return d.getFullYear() === targetYear && weekNum === targetWeek;
+    // ISO 8601 準拠（月曜始まり・木曜日基準）で週番号を比較
+    // 旧: Math.ceil(dayOfYear / 7) は日曜始まりのため stats.js の ISO 週番号と1日ずれる
+    return _isoWeekStr(d) === value;
   }
   return true;
 }
