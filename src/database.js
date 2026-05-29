@@ -201,13 +201,30 @@ function initializeDatabase() {
       }
     });
     upsertTx();
-    // UNIQUE INDEX を追加（既存データに重複があっても警告のみ）
-    try {
-      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sr_name_email ON sales_reports(applicant_name_email)');
-      console.log('Migration: sales_reports.applicant_name_email column + UNIQUE INDEX added');
-    } catch (e) {
-      console.warn('Migration: idx_sr_name_email UNIQUE INDEX 作成スキップ（既存重複あり）:', e.message);
+    // UNIQUE INDEX は追加しない（複数報告を許可するため）
+    console.log('Migration: sales_reports.applicant_name_email column added');
+  }
+
+  // Migration: sales_reports に parent_id カラムを追加
+  //   追記（2件目以降）の場合、元の報告の id を格納する
+  //   初回報告は NULL
+  if (!srCols.includes('parent_id')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN parent_id INTEGER');
+    console.log('Migration: sales_reports.parent_id column added');
+  }
+
+  // Migration: idx_sr_name_email UNIQUE INDEX を削除（複数報告を許可するため）
+  //   既に存在する場合のみ DROP（存在しなければスキップ）
+  try {
+    const hasUniqueIdx = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_sr_name_email'"
+    ).get();
+    if (hasUniqueIdx) {
+      db.exec('DROP INDEX idx_sr_name_email');
+      console.log('Migration: idx_sr_name_email UNIQUE INDEX removed (multi-report support)');
     }
+  } catch (e) {
+    console.warn('Migration: idx_sr_name_email DROP スキップ:', e.message);
   }
 
   // すくう君発話比率分析履歴テーブル

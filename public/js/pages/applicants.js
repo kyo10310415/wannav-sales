@@ -407,22 +407,25 @@ const ApplicantsPage = {
   },
 
   getReportForApplicant(a) {
-    // 優先順位: ① メール一致 → ② 氏名一致（メールなし同士）
-    // 同姓同名でメールが異なる場合は別人として扱う
+    // 最新の報告（1件）を返す（面接実施済み・結果表示に使用）
+    const all = this.getReportsForApplicant(a);
+    return all.length > 0 ? all[0] : null;
+  },
+
+  getReportsForApplicant(a) {
+    // 同一人物の報告を全件返す（新しい順）
     const aEmail = (a.email || '').toLowerCase().trim();
-    return this.reports.find(r => {
+    const matches = this.reports.filter(r => {
       const rEmail = (r.applicant_email || '').toLowerCase().trim();
       if (aEmail && rEmail) {
-        // 両方メールあり → メール+氏名の完全一致
         return rEmail === aEmail && r.applicant_full_name === a.full_name;
       }
       if (!aEmail && !rEmail) {
-        // 両方メールなし → 氏名のみ一致
         return r.applicant_full_name === a.full_name;
       }
-      // 片方だけメールあり → 氏名一致で仮紐付け（曖昧一致として許容）
       return r.applicant_full_name === a.full_name;
-    }) || null;
+    });
+    return matches.sort((x, y) => y.id - x.id);
   },
 
   filterAndRender() {
@@ -448,10 +451,10 @@ const ApplicantsPage = {
 
     if (this.filterResult) {
       list = list.filter(a => {
-        const report = this.getReportForApplicant(a);
-        if (this.filterResult === 'contract')   return report && (report.result?.includes('契約') || report.result === '契約');
-        if (this.filterResult === 'reported')   return !!report;
-        if (this.filterResult === 'unreported') return !report;
+        const reports = this.getReportsForApplicant(a);
+        if (this.filterResult === 'contract')   return reports.some(r => r.result?.includes('契約') || r.result === '契約');
+        if (this.filterResult === 'reported')   return reports.length > 0;
+        if (this.filterResult === 'unreported') return reports.length === 0;
         return true;
       });
     }
@@ -492,17 +495,14 @@ const ApplicantsPage = {
     // 担当者フィルター
     if (this.filterInterviewer) {
       list = list.filter(a => {
-        const report = this.getReportForApplicant(a);
-        return report && report.interviewer_name === this.filterInterviewer;
+        return this.getReportsForApplicant(a).some(r => r.interviewer_name === this.filterInterviewer);
       });
     }
 
     // 営業報告の結果フィルター（詳細）
     if (this.filterReportResult) {
       list = list.filter(a => {
-        const report = this.getReportForApplicant(a);
-        if (!report) return false;
-        return (report.result || '').includes(this.filterReportResult);
+        return this.getReportsForApplicant(a).some(r => (r.result || '').includes(this.filterReportResult));
       });
     }
 
@@ -654,8 +654,9 @@ const ApplicantsPage = {
     headerCells.push(`<th style="text-align:center;font-size:11px;padding:6px 4px">営業報告</th>`);
 
     const rowsHtml = items.map(a => {
-      const report    = this.getReportForApplicant(a);
-      const isContract = report && (report.result?.includes('契約') || report.result === '契約');
+      const report     = this.getReportForApplicant(a);  // 最新の報告
+      const allReports = this.getReportsForApplicant(a);
+      const isContract = allReports.some(r => r.result?.includes('契約') || r.result === '契約');
       const rowBg     = isContract ? 'background:#f0fdf4' : '';
       const safeId    = `app-${a.row_index}`;
       const appKey    = this._applicantKey(a);
@@ -677,12 +678,16 @@ const ApplicantsPage = {
         return `<td style="${cellStyle}" title="${Utils.escHtml(col ? col.value : '')}">${Utils.escHtml(val)}</td>`;
       });
 
-      // 機能5: 営業報告由来の追加列セル
+      // 機能5: 営業報告由来の追加列セル（最新報告の内容を表示）
       const notionUrl = report ? (report.notion_url || '') : '';
+      // 結果列: 複数報告時は全件の結果を / 区切りで表示
+      const resultDisplay = allReports.length > 1
+        ? allReports.map(r => r.result || '-').join(' / ')
+        : (report ? (report.result || '-') : '-');
       const extraVals = [
         report ? (report.interviewer_name  || '-') : '-',
         report ? (report.interview_content || '-') : '-',
-        report ? (report.result            || '-') : '-',
+        resultDisplay,
         report ? (report.contract_plan     || '-') : '-',
         report ? (report.student_number    || '-') : '-',
       ];
@@ -712,9 +717,13 @@ const ApplicantsPage = {
                   ? '<span style="font-size:9px;background:#dcfce7;color:#16a34a;border-radius:4px;padding:1px 5px;font-weight:700"><i class="fas fa-check"></i> 契約</span>'
                   : `<span style="font-size:9px;background:#f3f4f6;color:#374151;border-radius:4px;padding:1px 5px">${Utils.escHtml(report.result || '報告あり')}</span>`
                 }
+                ${allReports.length > 1
+                  ? `<span style="font-size:9px;background:#dbeafe;color:#1d4ed8;border-radius:4px;padding:1px 5px;font-weight:600">報告 ${allReports.length}件</span>`
+                  : ''
+                }
                 <button class="btn btn-secondary btn-xs" style="font-size:10px;padding:2px 6px"
                   onclick="ApplicantsPage.editReport('${safeId}',${report.id})">
-                  <i class="fas fa-edit"></i>
+                  <i class="fas fa-plus-circle"></i> 追記
                 </button>
               </div>`
             : `<button class="btn btn-primary btn-xs" style="font-size:10px;padding:3px 6px"
