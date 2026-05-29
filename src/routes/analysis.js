@@ -264,6 +264,69 @@ router.post('/run', authenticateToken, async (req, res) => {
     });
   }
 
+  // ── ⑤'' クーリングオフ専用集計 ──────────────────────────────
+  const COOLINGOFF_RESULT = 'クーリングオフ';
+  const coolingoffReports = mergedReports.filter(r => r.result === COOLINGOFF_RESULT);
+  const coolingoffCount   = coolingoffReports.length;
+
+  // 担当者別クーリングオフ数
+  const coolingoffByInterviewer = {};
+  for (const r of coolingoffReports) {
+    const name = r.interviewer_name || '不明';
+    coolingoffByInterviewer[name] = (coolingoffByInterviewer[name] || 0) + 1;
+  }
+
+  // 支払方法別クーリングオフ数
+  const coolingoffByPayment = {};
+  for (const r of coolingoffReports) {
+    const p = r.payment_method || '未記入';
+    coolingoffByPayment[p] = (coolingoffByPayment[p] || 0) + 1;
+  }
+
+  // 面接内容別クーリングオフ数
+  const coolingoffByContent = {};
+  for (const r of coolingoffReports) {
+    const c = r.interview_content || '未記入';
+    coolingoffByContent[c] = (coolingoffByContent[c] || 0) + 1;
+  }
+
+  // STAY数分布（クーリングオフのみ）
+  const coolingoffByStay = {};
+  for (const r of coolingoffReports) {
+    const s = r.stay_count != null ? String(r.stay_count) : '未記入';
+    coolingoffByStay[s] = (coolingoffByStay[s] || 0) + 1;
+  }
+
+  // 辞退理由集計（クーリングオフのみ）
+  const coolingoffDeclineReasonCount = {};
+  for (const r of coolingoffReports) {
+    (r.decline_reasons || '').split(',').map(s => s.trim()).filter(Boolean).forEach(reason => {
+      coolingoffDeclineReasonCount[reason] = (coolingoffDeclineReasonCount[reason] || 0) + 1;
+    });
+  }
+
+  // Notion属性別クーリングオフ（都道府県・学歴・月収・Sales分類）
+  const coolingoffByPref    = {};
+  const coolingoffByEdu     = {};
+  const coolingoffByIncome  = {};
+  const coolingoffBySales   = {};
+  for (const r of coolingoffReports) {
+    if (r._notion_matched) {
+      const pref   = r._notion_prefecture       || '不明';
+      const edu    = r._notion_final_education  || '不明';
+      const income = r._notion_monthly_income   || '不明';
+      const sales  = r._notion_sales_class      || '不明';
+      coolingoffByPref[pref]     = (coolingoffByPref[pref]     || 0) + 1;
+      coolingoffByEdu[edu]       = (coolingoffByEdu[edu]       || 0) + 1;
+      coolingoffByIncome[income] = (coolingoffByIncome[income] || 0) + 1;
+      coolingoffBySales[sales]   = (coolingoffBySales[sales]   || 0) + 1;
+    }
+  }
+
+  // クーリングオフ率（面接件数に対する割合）
+  const coolingoffRatePct = totalReports > 0
+    ? Math.round(coolingoffCount / totalReports * 1000) / 10 : 0;
+
   // ── ⑤' Notion由来の集計 ───────────────────────────────────
   const notionMatchedReports   = mergedReports.filter(r => r._notion_matched);
   const notionMatchCount       = notionMatchedReports.length;
@@ -447,6 +510,26 @@ router.post('/run', authenticateToken, async (req, res) => {
     (r.details ? `備考:${r.details.slice(0, 60)}` : '')
   ).join('\n');
 
+  // クーリングオフ全件個別レコード（制限なし）
+  const formatRecord = r =>
+    `[${r.interview_date || r.created_at?.slice(0, 10)}] 担当:${r.interviewer_name || '-'} ` +
+    `応募者:${r.applicant_full_name || '-'} ` +
+    (r._gender    ? `性別:${r._gender} `    : '') +
+    (r._ad_source ? `媒体:${r._ad_source} ` : '') +
+    `内容:${r.interview_content || '-'} ` +
+    `STAY:${r.stay_count ?? '-'} NO:${r.no_count ?? '-'} ` +
+    `支払:${r.payment_method || '-'} 権利:${r.character_rights || '-'} ` +
+    (r._notion_matched ? (
+      (r._notion_prefecture      ? `都道府県:${r._notion_prefecture} `      : '') +
+      (r._notion_final_education ? `学歴:${r._notion_final_education} `     : '') +
+      (r._notion_sales_class     ? `Sales分類:${r._notion_sales_class} `   : '') +
+      (r._notion_monthly_income  ? `月収:${r._notion_monthly_income} `     : '')
+    ) : '') +
+    (r.decline_reasons ? `辞退理由:[${r.decline_reasons}] ` : '') +
+    (r.details ? `備考:${r.details.slice(0, 80)}` : '');
+
+  const coolingoffAllRecords = coolingoffReports.map(formatRecord).join('\n');
+
   // シートのみ応募者（直近20件）
   const sheetOnlyRecords = sheetOnlyApplicants.slice(0, 20).map(a =>
     `[${a.date_str}] 応募者:${a.full_name || '-'} ` +
@@ -471,11 +554,12 @@ router.post('/run', authenticateToken, async (req, res) => {
   シートのみ: ${sheetOnlyTotal}人 / 書類通過: ${sheetOnlyDocPass}人 / 面接実施: ${sheetOnlyInterview}人 / CV: ${sheetOnlyCV}人
 
 【営業報告サマリー（面接実施ベース）】
-  総面接件数:        ${totalReports}件
-  契約件数:          ${contractCount}件
-  CVR（面接→契約）:  ${cvrPct}%
-  平均STAYの回数:    ${avgStay}回
-  平均NOの回数:      ${avgNo}回
+  総面接件数:              ${totalReports}件
+  契約件数:                ${contractCount}件
+  CVR（面接→契約）:        ${cvrPct}%
+  クーリングオフ件数:      ${coolingoffCount}件（クーリングオフ率 ${coolingoffRatePct}%）
+  平均STAYの回数:          ${avgStay}回
+  平均NOの回数:            ${avgNo}回
 
 【担当者別集計】
 ${interviewerSummary || '  データなし'}
@@ -515,6 +599,29 @@ ${streamingSummary || '  データなし'}
 
 【月収帯別集計（Notionデータ）】
 ${incomeSummary || '  データなし'}
+
+【クーリングオフ詳細集計（全${coolingoffCount}件 / クーリングオフ率${coolingoffRatePct}%）】
+${coolingoffCount === 0 ? '  データなし' : `  担当者別:
+${Object.entries(coolingoffByInterviewer).sort((a,b)=>b[1]-a[1]).map(([n,c])=>`    - ${n}: ${c}件`).join('\n') || '    データなし'}
+  支払方法別:
+${Object.entries(coolingoffByPayment).sort((a,b)=>b[1]-a[1]).map(([p,c])=>`    - ${p}: ${c}件`).join('\n') || '    データなし'}
+  面接内容別:
+${Object.entries(coolingoffByContent).sort((a,b)=>b[1]-a[1]).map(([c,n])=>`    - ${c}: ${n}件`).join('\n') || '    データなし'}
+  STAY数分布:
+${Object.entries(coolingoffByStay).sort((a,b)=>Number(a[0]||0)-Number(b[0]||0)).map(([s,c])=>`    - STAY${s}回: ${c}件`).join('\n') || '    データなし'}
+  辞退理由:
+${Object.entries(coolingoffDeclineReasonCount).sort((a,b)=>b[1]-a[1]).map(([r,c])=>`    - ${r}: ${c}件`).join('\n') || '    データなし'}
+  都道府県別（Notion照合分）:
+${Object.entries(coolingoffByPref).sort((a,b)=>b[1]-a[1]).map(([p,c])=>`    - ${p}: ${c}件`).join('\n') || '    データなし（Notion未照合）'}
+  学歴別（Notion照合分）:
+${Object.entries(coolingoffByEdu).sort((a,b)=>b[1]-a[1]).map(([e,c])=>`    - ${e}: ${c}件`).join('\n') || '    データなし（Notion未照合）'}
+  月収帯別（Notion照合分）:
+${Object.entries(coolingoffByIncome).sort((a,b)=>b[1]-a[1]).map(([i,c])=>`    - ${i}: ${c}件`).join('\n') || '    データなし（Notion未照合）'}
+  Sales分類別（Notion照合分）:
+${Object.entries(coolingoffBySales).sort((a,b)=>b[1]-a[1]).map(([s,c])=>`    - ${s}: ${c}件`).join('\n') || '    データなし（Notion未照合）'}`}
+
+【クーリングオフ全件個別レコード（${coolingoffCount}件・全件）】
+${coolingoffAllRecords || '  データなし'}
 
 【直近${Math.min(50, totalReports)}件の個別レコード（営業報告＋シート＋Notion統合）】
 ${recentRecords || '  データなし'}

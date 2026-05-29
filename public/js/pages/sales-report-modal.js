@@ -99,11 +99,12 @@ const SalesReportModal = {
           <div>
             <div class="modal-title">
               <i class="fas fa-clipboard-list" style="color:var(--primary);margin-right:8px"></i>
-              ${this.editingReport ? '営業報告編集' : '営業報告入力'}
+              ${this.editingReport ? '営業報告を追記' : '営業報告入力'}
             </div>
             <div style="font-size:12px;color:var(--gray-500);margin-top:2px">
               対象: ${Utils.escHtml(fullName)}
               ${applicant?.email ? `(${Utils.escHtml(applicant.email)})` : ''}
+              ${this.editingReport ? `<span style="background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600;margin-left:6px"><i class="fas fa-history" style="margin-right:3px"></i>追記 (元ID: ${this.editingReport.id})</span>` : ''}
             </div>
           </div>
           <button class="modal-close" id="sr-close"><i class="fas fa-times"></i></button>
@@ -240,7 +241,7 @@ const SalesReportModal = {
         <div class="modal-footer">
           <button class="btn btn-secondary" id="sr-cancel">キャンセル</button>
           <button class="btn btn-primary" id="sr-save">
-            <i class="fas fa-save"></i> ${this.editingReport ? '更新' : '保存'}
+            <i class="fas fa-${this.editingReport ? 'plus-circle' : 'save'}"></i> ${this.editingReport ? '追記保存' : '保存'}
           </button>
         </div>
       </div>
@@ -314,7 +315,7 @@ const SalesReportModal = {
     try {
       if (this.editingReport) {
         await API.salesReports.update(this.editingReport.id, payload);
-        Utils.notify('営業報告を更新しました', 'success');
+        Utils.notify('営業報告を追記しました', 'success');
       } else {
         await API.salesReports.create(payload);
         Utils.notify('営業報告を保存しました', 'success');
@@ -325,31 +326,11 @@ const SalesReportModal = {
         await ApplicantsPage.loadReports();
       }
     } catch (err) {
-      const isDuplicate = err.status === 409 || (err.message && err.message.includes('すでに登録'));
       errorEl.style.display = 'flex';
       errorEl.className = 'alert alert-error';
-      if (isDuplicate) {
-        // 重複エラー: 既存報告を開くリンクを表示
-        const existingId = err.data?.existingId || null;
-        const editLink = existingId
-          ? `<br><a href="#" id="sr-open-existing" style="color:inherit;text-decoration:underline;font-weight:600">既存の営業報告を開いて編集する →</a>`
-          : '';
-        errorEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i><span>${err.message}${editLink}</span>`;
-        if (existingId) {
-          document.getElementById('sr-open-existing')?.addEventListener('click', async (e) => {
-            e.preventDefault();
-            this.close();
-            try {
-              const report = await API.salesReports.get(existingId);
-              SalesReportModal.open(null, report);
-            } catch (_) { Utils.notify('報告の取得に失敗しました', 'error'); }
-          });
-        }
-      } else {
-        errorEl.innerHTML = `<i class="fas fa-exclamation-circle"></i><span>${err.message}</span>`;
-      }
+      errorEl.innerHTML = `<i class="fas fa-exclamation-circle"></i><span>${err.message}</span>`;
       saveBtn.disabled = false;
-      saveBtn.innerHTML = `<i class="fas fa-save"></i> ${this.editingReport ? '更新' : '保存'}`;
+      saveBtn.innerHTML = `<i class="fas fa-${this.editingReport ? 'plus-circle' : 'save'}"></i> ${this.editingReport ? '追記保存' : '保存'}`;
     }
   }
 };

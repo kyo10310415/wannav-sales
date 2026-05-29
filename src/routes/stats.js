@@ -37,24 +37,20 @@ function isoWeekPeriod(col) {
 }
 
 // ============================================================
-// 重複除外サブクエリ（氏名+メール複合キー、フォールバックあり）
-//   MAX(id): 最新レコードを残す
-//   first_created_at: 同一人物の初回登録日時（MIN(created_at)）
-//     → interview_date が空欄の場合のフォールバック日付として使用
-//     → 後から報告を更新しても「最初に登録した週」に集計されるよう保証
+// 全件集計サブクエリ
+//   ※ 追記（parent_id IS NOT NULL）も含めてすべての報告行を対象にする
+//   interview_date フォールバック用に first_created_at を付与:
+//     初回報告（parent_id IS NULL）は自身の created_at
+//     追記報告（parent_id IS NOT NULL）は初回報告の created_at を引き継ぐ
 // ============================================================
 const DEDUP_SUBQUERY = `(
   SELECT sr.*,
-         g.first_created_at
+         COALESCE(
+           root.created_at,
+           sr.created_at
+         ) AS first_created_at
   FROM sales_reports sr
-  JOIN (
-    SELECT
-      COALESCE(NULLIF(applicant_name_email,''), applicant_full_name) AS dedup_key,
-      MAX(id)         AS max_id,
-      MIN(created_at) AS first_created_at
-    FROM sales_reports
-    GROUP BY dedup_key
-  ) AS g ON sr.id = g.max_id
+  LEFT JOIN sales_reports root ON root.id = sr.parent_id
 ) AS sr`;
 
 // ============================================================
@@ -150,20 +146,17 @@ function buildBaseSQL(periodFilter, filterConds, withJoin) {
     ? `LEFT JOIN notion_profiles np ON np.student_number = sr.student_number`
     : '';
 
-  // 重複除外サブクエリ（period filter はサブクエリ外に適用）
-  // first_created_at: 同一人物の初回登録日時（interview_date 空欄時のフォールバック）
+  // 全件集計サブクエリ（追記報告も含む全行を対象）
+  // first_created_at: interview_date 空欄時のフォールバック用
+  //   追記報告の場合は初回報告の created_at を使用（週・月が変わらないよう保証）
   const dedup = `(
     SELECT sr.*,
-           g.first_created_at
+           COALESCE(
+             root.created_at,
+             sr.created_at
+           ) AS first_created_at
     FROM sales_reports sr
-    JOIN (
-      SELECT
-        COALESCE(NULLIF(applicant_name_email,''), applicant_full_name) AS dedup_key,
-        MAX(id)         AS max_id,
-        MIN(created_at) AS first_created_at
-      FROM sales_reports
-      GROUP BY dedup_key
-    ) AS g ON sr.id = g.max_id
+    LEFT JOIN sales_reports root ON root.id = sr.parent_id
   ) AS sr`;
 
   const allConds = [];
@@ -229,10 +222,10 @@ router.get('/weekly', authenticateToken, (req, res) => {
   const data = db.prepare(`
     SELECT
       ${weekFmt} as period,
-      SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
+      SUM(CASE WHEN sr.parent_id IS NULL AND NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
       SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
-      SUM(CASE WHEN ${NOSHOW_CONDITION}       THEN 1 ELSE 0 END) as total_noshow
+      SUM(CASE WHEN sr.parent_id IS NULL AND (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_noshow
     ${baseSQL}
     GROUP BY period
     HAVING period IS NOT NULL
@@ -260,10 +253,10 @@ router.get('/monthly', authenticateToken, (req, res) => {
   const data = db.prepare(`
     SELECT
       strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))) as period,
-      SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
+      SUM(CASE WHEN sr.parent_id IS NULL AND NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
       SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
-      SUM(CASE WHEN ${NOSHOW_CONDITION}       THEN 1 ELSE 0 END) as total_noshow
+      SUM(CASE WHEN sr.parent_id IS NULL AND (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_noshow
     ${baseSQL}
     GROUP BY period
     HAVING period IS NOT NULL
@@ -316,19 +309,15 @@ router.get('/summary', authenticateToken, (req, res) => {
   if (periodCond)        allConds.push(periodCond);
   allConds.push(...filterConds);
 
-  // first_created_at: 同一人物の初回登録日時（interview_date 空欄時のフォールバック）
+  // 全件集計サブクエリ（追記報告も含む全行を対象）
   const dedup = `(
     SELECT sr.*,
-           g.first_created_at
+           COALESCE(
+             root.created_at,
+             sr.created_at
+           ) AS first_created_at
     FROM sales_reports sr
-    JOIN (
-      SELECT
-        COALESCE(NULLIF(applicant_name_email,''), applicant_full_name) AS dedup_key,
-        MAX(id)         AS max_id,
-        MIN(created_at) AS first_created_at
-      FROM sales_reports
-      GROUP BY dedup_key
-    ) AS g ON sr.id = g.max_id
+    LEFT JOIN sales_reports root ON root.id = sr.parent_id
   ) AS sr`;
   const joinClause = withJoin
     ? `LEFT JOIN notion_profiles np ON np.student_number = sr.student_number`
@@ -340,15 +329,15 @@ router.get('/summary', authenticateToken, (req, res) => {
 
   const baseSQL = `FROM ${dedup} ${joinClause} ${whereClause}`;
 
-  // 面接実施数 = 営業報告が上がっている件数のうち「飛び」を除外
+  // 面接実施数 = 初回報告（parent_id IS NULL）のうち「飛び」を除外
   const totalInterviewsRow = db.prepare(
-    `SELECT SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as count ${baseSQL}`
+    `SELECT SUM(CASE WHEN sr.parent_id IS NULL AND NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as count ${baseSQL}`
   ).get(...allParams);
 
-  // 飛び件数
+  // 飛び件数 = 初回報告（parent_id IS NULL）のうち飛びのみ
   const noshowCond = allConds.length
-    ? `${allConds.join(' AND ')} AND ${NOSHOW_CONDITION}`
-    : NOSHOW_CONDITION;
+    ? `${allConds.join(' AND ')} AND sr.parent_id IS NULL AND ${NOSHOW_CONDITION}`
+    : `sr.parent_id IS NULL AND ${NOSHOW_CONDITION}`;
   const totalNoshowRow = db.prepare(
     `SELECT COUNT(*) as count FROM ${dedup} ${joinClause} WHERE ${noshowCond}`
   ).get(...allParams);
@@ -425,10 +414,10 @@ router.get('/all-periods', authenticateToken, (req, res) => {
   const data = db.prepare(`
     SELECT
       ${fmt} as period,
-      SUM(CASE WHEN NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
+      SUM(CASE WHEN sr.parent_id IS NULL AND NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
       SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
       SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
-      SUM(CASE WHEN ${NOSHOW_CONDITION}       THEN 1 ELSE 0 END) as total_noshow
+      SUM(CASE WHEN sr.parent_id IS NULL AND (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_noshow
     ${baseSQL}
     GROUP BY period
     HAVING period IS NOT NULL
