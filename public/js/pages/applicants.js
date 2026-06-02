@@ -4,6 +4,7 @@ const ApplicantsPage = {
   filteredApplicants: [],
   reports: [],
   interviewDates: {}, // { applicant_key: 'YYYY-MM-DD' }
+  surpriseCallMap: {}, // { student_number: [row, ...] } サプライズコール紐づけ
   visibleHeaders: [],
   currentPage: 1,
   perPage: 20,
@@ -207,15 +208,24 @@ const ApplicantsPage = {
 
     try {
       const params = useCache ? {} : { refresh: '1' };
-      const [sheetData, reportsData, datesData] = await Promise.all([
+      const [sheetData, reportsData, datesData, scData] = await Promise.all([
         API.spreadsheet.applicants(params),
         API.salesReports.list(),
         API.interviewDates.list(),
+        API.surpriseCall.list().catch(() => ({ rows: [] })),
       ]);
       this.applicants = sheetData.applicants || [];
       this.visibleHeaders = sheetData.visibleHeaders || [];
       this.reports = reportsData || [];
       this.interviewDates = datesData || {};
+      // サプライズコール: student_number → 架電記録配列のMap構築
+      this.surpriseCallMap = {};
+      for (const row of (scData.rows || [])) {
+        const sn = (row['学籍番号'] || '').trim();
+        if (!sn) continue;
+        if (!this.surpriseCallMap[sn]) this.surpriseCallMap[sn] = [];
+        this.surpriseCallMap[sn].push(row);
+      }
       this.cacheInfo = {
         cached: sheetData.cached,
         age: sheetData.cache_age_seconds,
@@ -623,6 +633,7 @@ const ApplicantsPage = {
     ];
     headers.forEach(h => colDefs.push(`<col style="width:${this._colWidth(h)}">`) );
     reportExtraCols.forEach(h => colDefs.push(`<col style="width:${this._colWidth(h)};">`));
+    colDefs.push(`<col style="width:60px;min-width:54px">`); // 架電
     colDefs.push(`<col style="width:80px;min-width:72px">`); // 営業報告
 
     const headerCells = [
@@ -651,6 +662,8 @@ const ApplicantsPage = {
         </th>`
       );
     });
+    // 架電列ヘッダー
+    headerCells.push(`<th style="font-size:11px;padding:6px 4px;text-align:center;background:#f5f3ff;color:#7c3aed;white-space:nowrap"><i class="fas fa-phone-alt" style="margin-right:2px"></i>架電</th>`);
     headerCells.push(`<th style="text-align:center;font-size:11px;padding:6px 4px">営業報告</th>`);
 
     const rowsHtml = items.map(a => {
@@ -699,6 +712,30 @@ const ApplicantsPage = {
           : 'font-size:11px;padding:5px 4px;text-align:center;background:#fefce8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0';
         return `<td style="${style}" title="${Utils.escHtml(val)}">${Utils.escHtml(val)}</td>`;
       });
+      // 架電結果セル
+      const studentNum = report ? (report.student_number || '').trim() : '';
+      const scRecords  = studentNum ? (this.surpriseCallMap[studentNum] || []) : [];
+      const scCount    = scRecords.length;
+      const latestSc   = scCount > 0
+        ? [...scRecords].sort((a, b) => (b['タイムスタンプ'] || '').localeCompare(a['タイムスタンプ'] || ''))[0]
+        : null;
+      const scResult   = latestSc ? (latestSc['架電結果'] || '') : '';
+      const scResultColor = (scResult === '通話' || scResult === '繋がった') ? '#16a34a'
+        : scResult === '留守' ? '#d97706'
+        : scResult ? '#6b7280' : '#d1d5db';
+      const callCell = scCount > 0
+        ? `<td style="text-align:center;padding:4px 2px;background:#f5f3ff">
+            <button class="btn btn-xs sc-popup-btn"
+              style="font-size:10px;padding:2px 6px;background:${scResultColor}18;border:1px solid ${scResultColor}50;color:${scResultColor};border-radius:4px;white-space:nowrap;cursor:pointer"
+              data-student-num="${Utils.escHtml(studentNum)}"
+              title="架電記録を見る">
+              <i class="fas fa-phone-alt" style="margin-right:2px"></i>${scCount}件
+            </button>
+           </td>`
+        : `<td style="text-align:center;padding:4px 2px;background:#f5f3ff">
+            <span style="font-size:10px;color:#d1d5db">—</span>
+           </td>`;
+
       // Notionリンク列（ボタン）
       const notionCell = `<td style="font-size:11px;padding:4px 6px;text-align:center;background:#fefce8">
         ${notionUrl
@@ -776,6 +813,7 @@ const ApplicantsPage = {
           </td>
           ${dataCells.join('')}
           ${reportExtraCells.join('')}
+          ${callCell}
           ${notionCell}
           <td style="text-align:center;padding:4px 2px;white-space:nowrap">${reportCell}</td>
         </tr>`;
@@ -794,6 +832,15 @@ const ApplicantsPage = {
         </table>
       </div>`;
 
+    // 架電記録ポップアップボタン
+    wrap.querySelectorAll('.sc-popup-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sn = btn.dataset.studentNum;
+        ApplicantsPage.showSurpriseCallPopup(e, sn);
+      });
+    });
+
     // イベントバインド
     wrap.querySelectorAll('.interview-date-input').forEach(input => {
       input.addEventListener('change', (e) => {
@@ -802,6 +849,119 @@ const ApplicantsPage = {
         this.saveInterviewDate(key, val, e.target);
       });
     });
+  },
+
+  // ── サプライズコール架電記録ポップアップ ──────────────────────
+  showSurpriseCallPopup(event, studentNum) {
+    // 既存ポップアップを閉じる
+    document.querySelectorAll('.sc-detail-popup').forEach(el => el.remove());
+
+    const records = this.surpriseCallMap[studentNum] || [];
+    if (records.length === 0) return;
+
+    // タイムスタンプ降順でソート
+    const sorted = [...records].sort((a, b) =>
+      (b['タイムスタンプ'] || '').localeCompare(a['タイムスタンプ'] || '')
+    );
+
+    const resultColor = (v) =>
+      (v === '通話' || v === '繋がった') ? '#16a34a'
+      : v === '留守' ? '#d97706'
+      : v ? '#6b7280' : '#9ca3af';
+
+    const statusColor = (v) =>
+      v === '継続' ? '#2563eb'
+      : v === 'CO' ? '#dc2626'
+      : v === '保留' ? '#d97706'
+      : v === '完了' ? '#16a34a'
+      : '#6b7280';
+
+    const rows = sorted.map(r => {
+      const rc = resultColor(r['架電結果'] || '');
+      const sc = statusColor(r['ステータス'] || '');
+      const heat = parseFloat(r['今の熱量を0~10点で教えてください'] || '');
+      const heatBar = !isNaN(heat)
+        ? `<span style="display:inline-flex;align-items:center;gap:3px">
+            <span style="display:inline-block;width:32px;height:5px;background:#e5e7eb;border-radius:3px;position:relative">
+              <span style="position:absolute;left:0;top:0;height:100%;width:${Math.min(100, heat / 10 * 100)}%;background:${heat >= 7 ? '#16a34a' : heat >= 4 ? '#d97706' : '#dc2626'};border-radius:3px"></span>
+            </span>
+            <b style="font-size:10px;color:${heat >= 7 ? '#16a34a' : heat >= 4 ? '#d97706' : '#dc2626'}">${heat}</b>
+          </span>`
+        : `<span style="color:#9ca3af;font-size:10px">-</span>`;
+      return `
+        <tr style="border-bottom:1px solid #f3f4f6">
+          <td style="padding:5px 8px;font-size:11px;white-space:nowrap;color:#6b7280">${Utils.escHtml(r['タイムスタンプ'] ? r['タイムスタンプ'].slice(0, 10) : '-')}</td>
+          <td style="padding:5px 8px;font-size:11px;text-align:center">
+            <span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:${rc}18;color:${rc};border:1px solid ${rc}40">
+              ${Utils.escHtml(r['架電結果'] || '-')}
+            </span>
+          </td>
+          <td style="padding:5px 8px;font-size:11px;text-align:center">
+            ${r['ステータス']
+              ? `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:${sc}18;color:${sc};border:1px solid ${sc}40">${Utils.escHtml(r['ステータス'])}</span>`
+              : '<span style="color:#9ca3af;font-size:10px">-</span>'
+            }
+          </td>
+          <td style="padding:5px 8px;font-size:11px;text-align:center">${heatBar}</td>
+          <td style="padding:5px 8px;font-size:11px;text-align:center;color:#374151">${Utils.escHtml(r['入会の手続きの満足度'] || '-')}</td>
+          <td style="padding:5px 8px;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#374151"
+              title="${Utils.escHtml(r['お手続きの中で不安に感じた点'] || '')}">${Utils.escHtml((r['お手続きの中で不安に感じた点'] || '-').slice(0, 30))}${(r['お手続きの中で不安に感じた点'] || '').length > 30 ? '…' : ''}</td>
+        </tr>`;
+    }).join('');
+
+    const popup = document.createElement('div');
+    popup.className = 'sc-detail-popup';
+    popup.style.cssText = `
+      position:fixed;z-index:9999;background:white;border-radius:10px;
+      box-shadow:0 8px 32px rgba(0,0,0,0.18);border:1px solid #e5e7eb;
+      min-width:520px;max-width:90vw;font-family:inherit;
+    `;
+    popup.innerHTML = `
+      <div style="padding:10px 14px 8px;border-bottom:1px solid #f3f4f6;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:13px;font-weight:700;color:#7c3aed">
+          <i class="fas fa-phone-alt" style="margin-right:6px"></i>架電記録（学籍番号: ${Utils.escHtml(studentNum)}）
+          <span style="font-size:11px;font-weight:400;color:#9ca3af;margin-left:6px">${sorted.length}件</span>
+        </div>
+        <button onclick="this.closest('.sc-detail-popup').remove()"
+          style="background:none;border:none;cursor:pointer;font-size:16px;color:#9ca3af;padding:0 2px;line-height:1">✕</button>
+      </div>
+      <div style="overflow-x:auto;max-height:280px;overflow-y:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="background:#f9fafb;font-size:10px;color:#6b7280">
+              <th style="padding:5px 8px;text-align:left;white-space:nowrap">日時</th>
+              <th style="padding:5px 8px;text-align:center;white-space:nowrap">架電結果</th>
+              <th style="padding:5px 8px;text-align:center;white-space:nowrap">ステータス</th>
+              <th style="padding:5px 8px;text-align:center;white-space:nowrap">熱量</th>
+              <th style="padding:5px 8px;text-align:center;white-space:nowrap">満足度</th>
+              <th style="padding:5px 8px;text-align:left;white-space:nowrap">不安な点</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+
+    // 位置を計算してDOMに追加
+    document.body.appendChild(popup);
+    const rect = event.target.getBoundingClientRect();
+    const pw = popup.offsetWidth;
+    const ph = popup.offsetHeight;
+    let top  = rect.bottom + window.scrollY + 4;
+    let left = rect.left  + window.scrollX;
+    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+    if (top + ph > window.scrollY + window.innerHeight - 8) top = rect.top + window.scrollY - ph - 4;
+    popup.style.top  = `${top}px`;
+    popup.style.left = `${left}px`;
+
+    // 外クリックで閉じる
+    const onOutside = (e) => {
+      if (!popup.contains(e.target)) {
+        popup.remove();
+        document.removeEventListener('click', onOutside);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', onOutside), 0);
   },
 
   // 面接日を保存
