@@ -25,7 +25,8 @@ app.use('/api/interview-dates', require('./src/routes/interviewDates'));
 app.use('/api/calendar', require('./src/routes/calendar'));
 app.use('/api/sukuukun', require('./src/routes/sukuukun'));
 app.use('/api/analysis', require('./src/routes/analysis'));
-app.use('/api/notion',   require('./src/routes/notion'));
+app.use('/api/notion',        require('./src/routes/notion'));
+app.use('/api/surprise-call', require('./src/routes/surpriseCall'));
 
 // Health check
 app.get('/api/health', (req, res) => {

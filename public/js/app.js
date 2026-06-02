@@ -46,6 +46,12 @@ const App = {
       title: '詳細データ',
       adminOnly: false,
     },
+    surpriseCall: {
+      nav: 'nav-surprise-call',
+      module: () => SurpriseCallPage,
+      title: 'サプライズコール',
+      adminOnly: false,
+    },
     users: {
       nav: 'nav-users',
       module: () => UsersPage,
@@ -163,6 +169,13 @@ const App = {
         page: 'notionDetail',
         icon: 'fa-database',
         label: '詳細データ',
+        show: true,
+      },
+      {
+        id: 'nav-surprise-call',
+        page: 'surpriseCall',
+        icon: 'fa-phone-alt',
+        label: 'サプライズコール',
         show: true,
       },
       {

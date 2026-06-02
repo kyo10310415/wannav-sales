@@ -180,6 +180,12 @@ const API = {
     exportSheet: (data) => API.post('/analysis/export-sheet', data),
   },
 
+  // Surprise Call
+  surpriseCall: {
+    list:    () => API.get('/surprise-call'),
+    refresh: () => API.post('/surprise-call/refresh', {}),
+  },
+
   // Notion Profiles
   notion: {
     profiles:   ()   => API.get('/notion/profiles'),
