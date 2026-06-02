@@ -23,7 +23,8 @@ const SurpriseCallPage = {
 
   // 架電結果ごとのバッジ色
   RESULT_COLORS: {
-    '繋がった':     '#16a34a',
+    '通話':         '#16a34a',
+    '繋がった':     '#16a34a',  // 旧表記との互換
     '留守':        '#d97706',
     '電話番号間違い': '#dc2626',
     '拒否':        '#dc2626',
@@ -80,7 +81,7 @@ const SurpriseCallPage = {
                 <select class="form-control" id="sc-filter-result" style="font-size:12px;height:34px"
                   onchange="SurpriseCallPage.applyFilter()">
                   <option value="">すべて</option>
-                  <option value="繋がった">繋がった</option>
+                  <option value="通話">通話（繋がった）</option>
                   <option value="留守">留守</option>
                   <option value="電話番号間違い">電話番号間違い</option>
                   <option value="拒否">拒否</option>
@@ -370,7 +371,7 @@ const SurpriseCallPage = {
     if (!el) return;
 
     const total    = this.rows.length;
-    const reached  = this.rows.filter(r => r['架電結果'] === '繋がった').length;
+    const reached  = this.rows.filter(r => r['架電結果'] === '通話' || r['架電結果'] === '繋がった').length;
     const coCount  = this.rows.filter(r => r['ステータス'] === 'CO').length;
     const sharedKuchikomi = this.rows.filter(r => {
       const v = (r['口コミ共有済み'] || '').toLowerCase();
@@ -388,7 +389,7 @@ const SurpriseCallPage = {
 
     const cards = [
       { icon: 'fa-phone-alt',       label: '総架電数',        value: `${total}件`,       color: '#7c3aed' },
-      { icon: 'fa-check-circle',    label: '繋がった',        value: `${reached}件`,     color: '#16a34a' },
+      { icon: 'fa-check-circle',    label: '繋がった（通話）',  value: `${reached}件`,     color: '#16a34a' },
       { icon: 'fa-percent',         label: '架電到達率',      value: `${reachRate}%`,    color: '#2563eb' },
       { icon: 'fa-fire',            label: '平均熱量',        value: avgHeat,            color: '#d97706' },
       { icon: 'fa-undo',            label: 'CO件数',          value: `${coCount}件`,     color: '#dc2626' },
