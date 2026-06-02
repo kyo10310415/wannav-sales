@@ -14,8 +14,8 @@ const { authenticateToken } = require('../middleware/auth');
 
 // ── スプレッドシート設定 ──────────────────────────────────────
 const SPREADSHEET_ID = '1bDLJJuSx9LK1pr00478iQooUagLtGzfv8h8V-p6Etvs';
-const SHEET_NAME     = 'フォームの回答 1';
-const RANGE          = `${SHEET_NAME}!A1:T`;
+const SHEET_NAME     = 'サプライズコール結果';
+const RANGE          = `'${SHEET_NAME}'!A1:T5000`;
 
 // ── キャッシュ（TTL: 10分）──────────────────────────────────
 const CACHE_TTL_MS = 10 * 60 * 1000;
