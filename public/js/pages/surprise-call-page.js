@@ -33,10 +33,11 @@ const SurpriseCallPage = {
 
   // ステータスごとのバッジ色
   STATUS_COLORS: {
-    '継続':   '#2563eb',
-    'CO':     '#dc2626',
-    '保留':   '#d97706',
-    '完了':   '#16a34a',
+    '継続':         '#2563eb',
+    'CO':           '#dc2626',
+    'クーリングオフ': '#dc2626',
+    '保留':         '#d97706',
+    '完了':         '#16a34a',
   },
 
   render() {
@@ -372,7 +373,11 @@ const SurpriseCallPage = {
 
     const total    = this.rows.length;
     const reached  = this.rows.filter(r => r['架電結果'] === '通話' || r['架電結果'] === '繋がった').length;
-    const coCount  = this.rows.filter(r => r['ステータス'] === 'CO').length;
+    // CO件数: 'CO' または 'クーリングオフ' のいずれかを含む
+    const coCount  = this.rows.filter(r => {
+      const s = r['ステータス'] || '';
+      return s === 'CO' || s === 'クーリングオフ';
+    }).length;
     const sharedKuchikomi = this.rows.filter(r => {
       const v = (r['口コミ共有済み'] || '').toLowerCase();
       return v === '○' || v === 'true' || v === '1' || v === 'はい';
