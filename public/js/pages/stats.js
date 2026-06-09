@@ -10,6 +10,7 @@ const StatsPage = {
   // CV はスプレッドシートではなく営業報告の契約数を使う（cvContractCount は廃止）
   loadingApplicantCount: false,
   allPeriods: [],
+  _interviewDateCvrLoaded: false, // 面接実施日ベースCVRタブのロード済みフラグ
   // フィルター
   filters: {
     interviewer:              '',
@@ -99,6 +100,11 @@ const StatsPage = {
             style="padding:8px 20px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;color:var(--gray-500);border-bottom:3px solid transparent;margin-bottom:-2px">
             <i class="fas fa-percentage" style="margin-right:5px"></i>CVR集計
           </button>
+          <button id="view-tab-interview-date" class="view-tab"
+            onclick="StatsPage.switchViewTab('interview-date')"
+            style="padding:8px 20px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;color:var(--gray-500);border-bottom:3px solid transparent;margin-bottom:-2px">
+            <i class="fas fa-calendar-check" style="margin-right:5px"></i>面接実施日ベースCVR
+          </button>
         </div>
 
         <!-- データ集計（ファネル）ビュー -->
@@ -132,6 +138,23 @@ const StatsPage = {
                 <div class="loading-spinner"><div class="spinner"></div><span>読み込み中...</span></div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- 面接実施日ベースCVRビュー -->
+        <div id="view-interview-date" style="display:none">
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-body" style="padding:14px 16px">
+              <div style="font-size:13px;color:var(--gray-600);line-height:1.6">
+                <i class="fas fa-info-circle" style="color:#3b82f6;margin-right:6px"></i>
+                <strong>面接実施日ベースCVR</strong>：応募者一覧で入力した<strong>面接実施日</strong>を基準に、
+                その月・週に面接した人が最終的に<strong>契約したか</strong>を集計します。
+                営業報告の入力日ではなく、実際の面接日での分析が可能です。
+              </div>
+            </div>
+          </div>
+          <div id="interview-date-cvr-wrap">
+            <div class="loading-spinner"><div class="spinner"></div><span>集計中...</span></div>
           </div>
         </div>
 
@@ -317,13 +340,27 @@ const StatsPage = {
   },
 
   switchViewTab(tab) {
-    const isFunnel = tab === 'funnel';
-    document.getElementById('view-funnel').style.display = isFunnel ? 'block' : 'none';
-    document.getElementById('view-cvr').style.display    = isFunnel ? 'none'  : 'block';
-    const fBtn = document.getElementById('view-tab-funnel');
-    const cBtn = document.getElementById('view-tab-cvr');
-    if (fBtn) { fBtn.style.borderBottomColor = isFunnel ? 'var(--primary)' : 'transparent'; fBtn.style.color = isFunnel ? 'var(--primary)' : 'var(--gray-500)'; }
-    if (cBtn) { cBtn.style.borderBottomColor = isFunnel ? 'transparent' : 'var(--primary)'; cBtn.style.color = isFunnel ? 'var(--gray-500)' : 'var(--primary)'; }
+    const isFunnel       = tab === 'funnel';
+    const isCvr          = tab === 'cvr';
+    const isInterviewDate = tab === 'interview-date';
+    document.getElementById('view-funnel').style.display         = isFunnel        ? 'block' : 'none';
+    document.getElementById('view-cvr').style.display            = isCvr           ? 'block' : 'none';
+    document.getElementById('view-interview-date').style.display = isInterviewDate ? 'block' : 'none';
+
+    const tabIds = ['funnel', 'cvr', 'interview-date'];
+    tabIds.forEach(id => {
+      const btn = document.getElementById(`view-tab-${id}`);
+      if (!btn) return;
+      const active = id === tab;
+      btn.style.borderBottomColor = active ? 'var(--primary)' : 'transparent';
+      btn.style.color             = active ? 'var(--primary)' : 'var(--gray-500)';
+    });
+
+    // 面接実施日タブを初めて開いたときにデータロード
+    if (isInterviewDate && !this._interviewDateCvrLoaded) {
+      this._interviewDateCvrLoaded = true;
+      this.loadInterviewDateCvr();
+    }
   },
 
   // ============================================================
@@ -853,4 +890,146 @@ const StatsPage = {
   formatWeekLabel(period) {
     return Utils.weekRangeLabel(period);
   },
+
+  // ============================================================
+  // 面接実施日ベースCVR ロード・描画
+  // ============================================================
+  async loadInterviewDateCvr() {
+    const wrap = document.getElementById('interview-date-cvr-wrap');
+    if (!wrap) return;
+    wrap.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><span>集計中...</span></div>`;
+
+    try {
+      const [monthData, weekData] = await Promise.all([
+        API.stats.interviewDateCvr('month'),
+        API.stats.interviewDateCvr('week'),
+      ]);
+      this._renderInterviewDateCvr(wrap, monthData, weekData);
+    } catch (err) {
+      wrap.innerHTML = `<div class="alert alert-error" style="margin:0"><i class="fas fa-exclamation-circle"></i><span>${Utils.escHtml(err.message)}</span></div>`;
+    }
+  },
+
+  _renderInterviewDateCvr(wrap, monthData, weekData) {
+    const pct = (n, b) => b > 0 ? ((n / b) * 100).toFixed(1) + '%' : '—';
+
+    const renderTable = (data, type) => {
+      if (!data.length) {
+        return `<div class="empty-state" style="padding:30px"><i class="fas fa-calendar-times"></i><p>面接実施日が登録されているデータがありません</p></div>`;
+      }
+      const maxCvr = Math.max(...data.map(d => parseFloat(d.cvr_interview) || 0));
+      return `
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;min-width:600px">
+            <thead>
+              <tr style="background:var(--gray-50)">
+                <th style="padding:10px 14px;font-size:12px;text-align:left;border-bottom:2px solid var(--gray-200)">期間</th>
+                <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);color:#10b981">
+                  <i class="fas fa-clipboard-check" style="margin-right:4px"></i>面接実施数
+                </th>
+                <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);color:#16a34a">
+                  <i class="fas fa-handshake" style="margin-right:4px"></i>契約数
+                </th>
+                <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);color:var(--primary)">
+                  CVR（面接→契約）
+                </th>
+                <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);color:#d97706">
+                  クーリングオフ
+                </th>
+                <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);color:#f59e0b">
+                  CO率
+                </th>
+                <th style="padding:10px 10px;font-size:12px;text-align:center;border-bottom:2px solid var(--gray-200);min-width:100px">
+                  CVR進捗
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.map(d => {
+                const cvr      = parseFloat(d.cvr_interview)  || 0;
+                const coRate   = parseFloat(d.coolingoff_rate) || 0;
+                const barWidth = maxCvr > 0 ? (cvr / maxCvr * 100).toFixed(0) : 0;
+                const label    = type === 'month'
+                  ? this.formatMonthLabel(d.period)
+                  : this.formatWeekLabel(d.period);
+                return `
+                  <tr>
+                    <td style="padding:10px 14px;font-weight:600;font-size:13px;white-space:nowrap">${Utils.escHtml(label)}</td>
+                    <td style="padding:8px 10px;text-align:center;font-weight:700;font-size:14px;color:#10b981">${d.total_interviewed.toLocaleString()}人</td>
+                    <td style="padding:8px 10px;text-align:center">
+                      <span class="badge badge-contract">${d.total_contracts}件</span>
+                    </td>
+                    <td style="padding:8px 10px;text-align:center">
+                      <strong style="color:var(--primary);font-size:15px">${cvr}%</strong>
+                    </td>
+                    <td style="padding:8px 10px;text-align:center;color:#d97706;font-weight:600">${d.total_coolingoff ?? 0}件</td>
+                    <td style="padding:8px 10px;text-align:center">
+                      ${coRate > 0
+                        ? `<strong style="color:#f59e0b">${coRate}%</strong>`
+                        : `<span style="color:var(--gray-300)">—</span>`}
+                    </td>
+                    <td style="padding:8px 10px">
+                      <div style="background:var(--gray-100);border-radius:4px;height:8px;overflow:hidden">
+                        <div style="background:var(--primary);height:100%;width:${barWidth}%;border-radius:4px;transition:width 0.3s"></div>
+                      </div>
+                    </td>
+                  </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div style="padding:10px 16px;font-size:11px;color:var(--gray-400);border-top:1px solid var(--gray-100)">
+          <i class="fas fa-info-circle" style="margin-right:4px"></i>
+          面接実施数は応募者一覧で登録した「面接実施日」ベース。CVR = 同一人物が最終的に契約に至った割合。
+        </div>`;
+    };
+
+    // サマリーカード（月次の直近3ヶ月）
+    const recent3 = monthData.slice(0, 3);
+    const summaryCards = recent3.length ? `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:20px">
+        ${recent3.map(d => {
+          const cvr   = parseFloat(d.cvr_interview) || 0;
+          const label = this.formatMonthLabel(d.period);
+          const color = cvr >= 20 ? '#16a34a' : cvr >= 10 ? '#2563eb' : '#d97706';
+          return `
+            <div class="card" style="padding:16px;text-align:center;border-top:3px solid ${color}">
+              <div style="font-size:11px;color:var(--gray-400);margin-bottom:4px">${Utils.escHtml(label)}</div>
+              <div style="font-size:28px;font-weight:800;color:${color};line-height:1">${cvr}<span style="font-size:16px">%</span></div>
+              <div style="font-size:11px;color:var(--gray-500);margin-top:4px">
+                ${d.total_interviewed}人面接 → 契約${d.total_contracts}件
+              </div>
+            </div>`;
+        }).join('')}
+      </div>` : '';
+
+    wrap.innerHTML = `
+      ${summaryCards}
+
+      <!-- 月次テーブル -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <div class="card-title">
+            <i class="fas fa-calendar-alt" style="margin-right:8px;color:var(--gray-500)"></i>月次 — 面接実施日ベースCVR一覧
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          ${renderTable(monthData, 'month')}
+        </div>
+      </div>
+
+      <!-- 週次テーブル -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <i class="fas fa-calendar-week" style="margin-right:8px;color:var(--gray-500)"></i>週次 — 面接実施日ベースCVR一覧
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          ${renderTable(weekData, 'week')}
+        </div>
+      </div>
+    `;
+  },
+
 };
