@@ -625,7 +625,7 @@ const ApplicantsPage = {
     })();
 
     // 追加列（営業報告から）
-    const reportExtraCols = ['面接担当者', '面接内容', '結果', '契約プラン', '学籍番号', 'Notion'];
+    const reportExtraCols = ['面接担当者', '面接内容', '結果', '契約プラン', '学籍番号'];
 
     const colDefs = [
       `<col style="width:110px;min-width:90px">`,  // 氏名
@@ -633,8 +633,9 @@ const ApplicantsPage = {
     ];
     headers.forEach(h => colDefs.push(`<col style="width:${this._colWidth(h)}">`) );
     reportExtraCols.forEach(h => colDefs.push(`<col style="width:${this._colWidth(h)};">`));
-    colDefs.push(`<col style="width:60px;min-width:54px">`); // 架電
-    colDefs.push(`<col style="width:80px;min-width:72px">`); // 営業報告
+    colDefs.push(`<col style="width:60px;min-width:54px">`);  // 架電
+    colDefs.push(`<col style="width:${this._colWidth('Notion')}">`); // Notion
+    colDefs.push(`<col style="width:80px;min-width:72px">`);  // 営業報告
 
     const headerCells = [
       `<th style="cursor:pointer;user-select:none;font-size:11px;padding:6px 6px"
@@ -662,8 +663,9 @@ const ApplicantsPage = {
         </th>`
       );
     });
-    // 架電列ヘッダー
+    // 架電列ヘッダー → Notion列ヘッダー → 営業報告列ヘッダー（データ順と一致）
     headerCells.push(`<th style="font-size:11px;padding:6px 4px;text-align:center;background:#f5f3ff;color:#7c3aed;white-space:nowrap"><i class="fas fa-phone-alt" style="margin-right:2px"></i>架電</th>`);
+    headerCells.push(`<th style="font-size:11px;padding:6px 4px;text-align:center;background:#fefce8;color:#92400e;white-space:nowrap">Notion</th>`);
     headerCells.push(`<th style="text-align:center;font-size:11px;padding:6px 4px">営業報告</th>`);
 
     const rowsHtml = items.map(a => {
