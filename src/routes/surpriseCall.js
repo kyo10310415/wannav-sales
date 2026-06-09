@@ -89,9 +89,14 @@ async function fetchSheet() {
   const allRows = response.data.values || [];
   if (allRows.length === 0) return { headers: EXPECTED_HEADERS, rows: [] };
 
-  // 1行目をヘッダーとして使用（実際のヘッダーが取れる場合はそれを優先）
-  const headerRow = allRows[0];
-  const headers   = EXPECTED_HEADERS; // 定義済みヘッダーを使用
+  // 1行目を実際のヘッダーとして使用（列順がシートと一致するよう実ヘッダー優先）
+  // 空セルは EXPECTED_HEADERS の対応インデックスの値でフォールバック
+  const rawHeader = allRows[0];
+  const headers = rawHeader.map((h, i) =>
+    (h && String(h).trim()) ? String(h).trim() : (EXPECTED_HEADERS[i] || `col_${i}`)
+  );
+  // EXPECTED_HEADERS にあってシートヘッダーにない列はスキップされるが、
+  // 存在する列は実ヘッダー名でキーが付くので後段のフィルタ・集計に影響しない
 
   // 2行目以降をデータ行としてオブジェクト配列に変換
   const rows = allRows.slice(1).map((row, idx) => {

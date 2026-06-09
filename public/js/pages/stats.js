@@ -901,8 +901,8 @@ const StatsPage = {
 
     try {
       const [monthData, weekData] = await Promise.all([
-        API.stats.interviewDateCvr('month'),
-        API.stats.interviewDateCvr('week'),
+        API.stats.interviewDateCvr('month').catch(() => []),
+        API.stats.interviewDateCvr('week').catch(() => []),
       ]);
       this._renderInterviewDateCvr(wrap, monthData, weekData);
     } catch (err) {
