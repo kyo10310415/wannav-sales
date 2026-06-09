@@ -21,6 +21,7 @@ const ApplicantsPage = {
   filterReportResult: '',
   filterNoInterviewDate: false,
   filterHasInterviewDate: false,
+  filterOverdueDate: false,     // 面接予定日超過（面接日 < 今日 かつ 未報告）
   sortCol: null,
   sortDir: 'desc',
 
@@ -136,6 +137,13 @@ const ApplicantsPage = {
                   onclick="ApplicantsPage.toggleHasDateFilter()"
                   style="margin-top:auto;background:#7c3aed;border-color:#7c3aed;color:white;white-space:nowrap;opacity:0.7">
                   <i class="fas fa-calendar-check"></i> 面接日入力済み
+                </button>
+              </div>
+              <div>
+                <button class="btn btn-sm" id="filter-overdue-btn"
+                  onclick="ApplicantsPage.toggleOverdueDateFilter()"
+                  style="margin-top:auto;background:#dc2626;border-color:#dc2626;color:white;white-space:nowrap;opacity:0.7">
+                  <i class="fas fa-exclamation-circle"></i> 期日超過
                 </button>
               </div>
             </div>
@@ -353,7 +361,7 @@ const ApplicantsPage = {
 
   toggleNoDateFilter() {
     this.filterNoInterviewDate = !this.filterNoInterviewDate;
-    if (this.filterNoInterviewDate) this.filterHasInterviewDate = false;
+    if (this.filterNoInterviewDate) { this.filterHasInterviewDate = false; this.filterOverdueDate = false; }
     this.currentPage = 1;
     const btn = document.getElementById('filter-no-date-btn');
     if (btn) {
@@ -367,12 +375,14 @@ const ApplicantsPage = {
     }
     const btn2 = document.getElementById('filter-has-date-btn');
     if (btn2) { btn2.style.opacity = '0.7'; btn2.style.boxShadow = ''; }
+    const btn3 = document.getElementById('filter-overdue-btn');
+    if (btn3) { btn3.style.opacity = '0.7'; btn3.style.boxShadow = ''; }
     this.filterAndRender();
   },
 
   toggleHasDateFilter() {
     this.filterHasInterviewDate = !this.filterHasInterviewDate;
-    if (this.filterHasInterviewDate) this.filterNoInterviewDate = false;
+    if (this.filterHasInterviewDate) { this.filterNoInterviewDate = false; this.filterOverdueDate = false; }
     this.currentPage = 1;
     const btn = document.getElementById('filter-has-date-btn');
     if (btn) {
@@ -384,6 +394,27 @@ const ApplicantsPage = {
     }
     const btn2 = document.getElementById('filter-no-date-btn');
     if (btn2) { btn2.style.background = '#f59e0b'; btn2.style.borderColor = '#f59e0b'; btn2.style.boxShadow = ''; }
+    const btn3 = document.getElementById('filter-overdue-btn');
+    if (btn3) { btn3.style.opacity = '0.7'; btn3.style.boxShadow = ''; }
+    this.filterAndRender();
+  },
+
+  toggleOverdueDateFilter() {
+    this.filterOverdueDate = !this.filterOverdueDate;
+    if (this.filterOverdueDate) { this.filterNoInterviewDate = false; this.filterHasInterviewDate = false; }
+    this.currentPage = 1;
+    const btn = document.getElementById('filter-overdue-btn');
+    if (btn) {
+      if (this.filterOverdueDate) {
+        btn.style.opacity = '1'; btn.style.boxShadow = '0 0 0 3px rgba(220,38,38,0.35)';
+      } else {
+        btn.style.opacity = '0.7'; btn.style.boxShadow = '';
+      }
+    }
+    const btn2 = document.getElementById('filter-no-date-btn');
+    if (btn2) { btn2.style.background = '#f59e0b'; btn2.style.borderColor = '#f59e0b'; btn2.style.boxShadow = ''; }
+    const btn3 = document.getElementById('filter-has-date-btn');
+    if (btn3) { btn3.style.opacity = '0.7'; btn3.style.boxShadow = ''; }
     this.filterAndRender();
   },
 
@@ -398,6 +429,7 @@ const ApplicantsPage = {
     this.filterReportResult = '';
     this.filterNoInterviewDate = false;
     this.filterHasInterviewDate = false;
+    this.filterOverdueDate = false;
     this.sortCol = null;
     this.sortDir = 'desc';
     this.currentPage = 1;
@@ -413,6 +445,8 @@ const ApplicantsPage = {
     if (btn) { btn.style.background = '#f59e0b'; btn.style.borderColor = '#f59e0b'; btn.style.boxShadow = ''; }
     const btn2 = document.getElementById('filter-has-date-btn');
     if (btn2) { btn2.style.opacity = '0.7'; btn2.style.boxShadow = ''; }
+    const btn3 = document.getElementById('filter-overdue-btn');
+    if (btn3) { btn3.style.opacity = '0.7'; btn3.style.boxShadow = ''; }
     this.filterAndRender();
   },
 
@@ -483,6 +517,19 @@ const ApplicantsPage = {
         const key = this._applicantKey(a);
         const dateVal = this.interviewDates[key];
         return dateVal && dateVal.trim() !== '';
+      });
+    }
+
+    // 期日超過フィルター: 面接日が入力済み かつ 今日より前 かつ 未報告
+    if (this.filterOverdueDate) {
+      const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+      list = list.filter(a => {
+        const key     = this._applicantKey(a);
+        const dateVal = this.interviewDates[key];
+        if (!dateVal || dateVal.trim() === '') return false;  // 面接日未入力は除外
+        if (dateVal >= today) return false;                   // 今日以降は除外
+        const reports = this.getReportsForApplicant(a);
+        return reports.length === 0;                          // 未報告のみ
       });
     }
 
@@ -596,7 +643,7 @@ const ApplicantsPage = {
       const hasFilter = this.searchQuery || this.filterDateFrom || this.filterDateTo ||
         this.filterResult || this.filterInterviewDateFrom || this.filterInterviewDateTo ||
         this.filterInterviewer || this.filterReportResult ||
-        this.filterHasInterviewDate || this.filterNoInterviewDate;
+        this.filterHasInterviewDate || this.filterNoInterviewDate || this.filterOverdueDate;
       wrap.innerHTML = `
         <div class="empty-state">
           <i class="fas fa-user-slash"></i>
