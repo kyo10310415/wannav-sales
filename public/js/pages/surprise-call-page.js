@@ -405,9 +405,8 @@ const SurpriseCallPage = {
     // 架電到達率 = ユニークユーザーベース
     const reachRate = uniqueCount > 0 ? Math.round(reachedUniqueCount / uniqueCount * 100) : 0;
 
-    // クーリングオフ数（シート内の統計値が存在する場合は最終行の値を使用、なければCOカウント）
-    const coRateRows = this.rows.filter(r => r['指定範囲内のクーリングオフ率'] && r['指定範囲内のクーリングオフ率'] !== '');
-    const coRateStr  = coRateRows.length > 0 ? coRateRows[coRateRows.length - 1]['指定範囲内のクーリングオフ率'] : '-';
+    // CO率 = CO件数 ÷ ユニークユーザー数（小数点1桁）
+    const coRate = uniqueCount > 0 ? (coCount / uniqueCount * 100).toFixed(1) : '0.0';
 
     const cards = [
       { icon: 'fa-phone-alt',       label: '総架電数',              value: `${total}件`,              color: '#7c3aed' },
@@ -417,8 +416,9 @@ const SurpriseCallPage = {
         sub: `${reachedUniqueCount}人 / ${uniqueCount}人` },
       { icon: 'fa-fire',            label: '平均熱量',               value: avgHeat,                   color: '#d97706' },
       { icon: 'fa-undo',            label: 'CO件数',                 value: `${coCount}件`,            color: '#dc2626' },
+      { icon: 'fa-chart-pie',       label: 'CO率',                   value: `${coRate}%`,              color: '#dc2626',
+        sub: `${coCount}件 / ${uniqueCount}人` },
       { icon: 'fa-star',            label: '口コミ共有済み',         value: `${sharedKuchikomi}件`,    color: '#f59e0b' },
-      { icon: 'fa-chart-pie',       label: 'CO率（シート）',         value: coRateStr,                 color: '#6b7280' },
     ];
 
     el.innerHTML = cards.map(c => `
