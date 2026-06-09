@@ -455,9 +455,8 @@ router.get('/interview-date-cvr', authenticateToken, (req, res) => {
       ? isoWeekPeriod(`aid.interview_date`)
       : `strftime('%Y-%m', aid.interview_date)`;
 
-    // applicant_key から営業報告を引くJOIN
-    // applicant_key = email優先 / なければ full_name（interviewDatesルートと同じ）
-    // CONTRACT/COOLINGOFF条件は sr2. 修飾なし（sales_reports に sr. プレフィックス元々なし）
+    // applicant_key = COALESCE(NULLIF(applicant_email,''), applicant_full_name)
+    //   ※ sales_reports のカラム名は applicant_email / applicant_full_name（email/full_name ではない）
     const data = db.prepare(`
       SELECT
         ${periodFmt} as period,
@@ -470,7 +469,7 @@ router.get('/interview-date-cvr', authenticateToken, (req, res) => {
           THEN aid.applicant_key END) as total_coolingoff
       FROM applicant_interview_dates aid
       LEFT JOIN sales_reports sr2
-        ON COALESCE(NULLIF(sr2.email,''), sr2.full_name) = aid.applicant_key
+        ON COALESCE(NULLIF(sr2.applicant_email,''), sr2.applicant_full_name) = aid.applicant_key
       WHERE aid.interview_date IS NOT NULL
         AND aid.interview_date != ''
       GROUP BY period
