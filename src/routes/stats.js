@@ -434,4 +434,56 @@ router.get('/all-periods', authenticateToken, (req, res) => {
   })));
 });
 
+// ============================================================
+// GET /api/stats/interview-date-cvr
+//   面接実施日（applicant_interview_dates.interview_date）ベースのCVR集計
+//   面接した月・週に「その人が最終的に契約したか」を集計する
+//   クエリパラメータ: type = 'month' | 'week'  (デフォルト: month)
+//
+//   結合ロジック:
+//     applicant_interview_dates.applicant_key
+//       = COALESCE(NULLIF(sr.email,''), sr.full_name)  （同じ形式）
+//     面接日が登録されている人だけを集計対象とする
+// ============================================================
+router.get('/interview-date-cvr', authenticateToken, (req, res) => {
+  const type  = req.query.type === 'week' ? 'week' : 'month';
+  const limit = type === 'week' ? 52 : 24;
+
+  // 面接実施日の期間フォーマット式
+  const periodFmt = type === 'week'
+    ? isoWeekPeriod(`aid.interview_date`)
+    : `strftime('%Y-%m', aid.interview_date)`;
+
+  // applicant_key から営業報告を引くJOIN
+  // applicant_key = email優先 / なければ full_name（interviewDatesルートと同じ）
+  const data = db.prepare(`
+    SELECT
+      ${periodFmt} as period,
+      COUNT(DISTINCT aid.applicant_key) as total_interviewed,
+      COUNT(DISTINCT CASE
+        WHEN ${CONTRACT_CONDITION.replace(/\bsr\./g, 'sr2.')}
+        THEN aid.applicant_key END) as total_contracts,
+      COUNT(DISTINCT CASE
+        WHEN ${COOLINGOFF_CONDITION.replace(/\bsr\./g, 'sr2.')}
+        THEN aid.applicant_key END) as total_coolingoff
+    FROM applicant_interview_dates aid
+    LEFT JOIN sales_reports sr2
+      ON COALESCE(NULLIF(sr2.email,''), sr2.full_name) = aid.applicant_key
+    WHERE aid.interview_date IS NOT NULL
+      AND aid.interview_date != ''
+    GROUP BY period
+    HAVING period IS NOT NULL
+    ORDER BY period DESC
+    LIMIT ${limit}
+  `).all();
+
+  res.json(data.map(d => ({
+    ...d,
+    cvr_interview:   d.total_interviewed > 0
+      ? ((d.total_contracts  / d.total_interviewed) * 100).toFixed(1) : '0.0',
+    coolingoff_rate: d.total_contracts > 0
+      ? ((d.total_coolingoff / d.total_contracts)   * 100).toFixed(1) : '0.0',
+  })));
+});
+
 module.exports = router;

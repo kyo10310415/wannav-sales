@@ -172,6 +172,7 @@ const API = {
     allPeriods:    (type, params = {}) => { const q = new URLSearchParams({ type, ...params }).toString(); return API.get(`/stats/all-periods?${q}`); },
     summary:       (params) => { const q = new URLSearchParams(params).toString(); return API.get(`/stats/summary?${q}`); },
     filterOptions: () => API.get('/stats/filter-options'),
+    interviewDateCvr: (type) => API.get(`/stats/interview-date-cvr?type=${type}`),
   },
 
   // Data Analysis

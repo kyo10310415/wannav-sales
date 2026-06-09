@@ -378,23 +378,42 @@ const SurpriseCallPage = {
       return v === '○' || v === 'true' || v === '1' || v === 'はい';
     }).length;
 
+    // ユニークユーザー数（学籍番号でデdup）
+    const uniqueStudents = new Set(
+      this.rows.map(r => (r['学籍番号'] || '').trim()).filter(s => s !== '')
+    );
+    const uniqueCount = uniqueStudents.size;
+
+    // ユニークユーザーのうち繋がったユーザー数（学籍番号単位で1件でも通話があればカウント）
+    const reachedStudents = new Set(
+      this.rows
+        .filter(r => r['架電結果'] === '通話' || r['架電結果'] === '繋がった')
+        .map(r => (r['学籍番号'] || '').trim())
+        .filter(s => s !== '')
+    );
+    const reachedUniqueCount = reachedStudents.size;
+
     // 平均熱量
     const heatVals  = this.rows.map(r => parseFloat(r['今の熱量を0~10点で教えてください'])).filter(n => !isNaN(n));
     const avgHeat   = heatVals.length > 0 ? (heatVals.reduce((s, n) => s + n, 0) / heatVals.length).toFixed(1) : '-';
-    const reachRate = total > 0 ? Math.round(reached / total * 100) : 0;
+
+    // 架電到達率 = ユニークユーザーベース
+    const reachRate = uniqueCount > 0 ? Math.round(reachedUniqueCount / uniqueCount * 100) : 0;
 
     // クーリングオフ数（シート内の統計値が存在する場合は最終行の値を使用、なければCOカウント）
     const coRateRows = this.rows.filter(r => r['指定範囲内のクーリングオフ率'] && r['指定範囲内のクーリングオフ率'] !== '');
     const coRateStr  = coRateRows.length > 0 ? coRateRows[coRateRows.length - 1]['指定範囲内のクーリングオフ率'] : '-';
 
     const cards = [
-      { icon: 'fa-phone-alt',       label: '総架電数',        value: `${total}件`,       color: '#7c3aed' },
-      { icon: 'fa-check-circle',    label: '繋がった（通話）',  value: `${reached}件`,     color: '#16a34a' },
-      { icon: 'fa-percent',         label: '架電到達率',      value: `${reachRate}%`,    color: '#2563eb' },
-      { icon: 'fa-fire',            label: '平均熱量',        value: avgHeat,            color: '#d97706' },
-      { icon: 'fa-undo',            label: 'CO件数',          value: `${coCount}件`,     color: '#dc2626' },
-      { icon: 'fa-star',            label: '口コミ共有済み',  value: `${sharedKuchikomi}件`, color: '#f59e0b' },
-      { icon: 'fa-chart-pie',       label: 'CO率（シート）',  value: coRateStr,          color: '#6b7280' },
+      { icon: 'fa-phone-alt',       label: '総架電数',              value: `${total}件`,              color: '#7c3aed' },
+      { icon: 'fa-users',           label: 'ユニークユーザー数',     value: `${uniqueCount}人`,        color: '#0369a1' },
+      { icon: 'fa-check-circle',    label: '繋がった（通話）',        value: `${reached}件`,            color: '#16a34a' },
+      { icon: 'fa-percent',         label: '架電到達率（ユニーク）', value: `${reachRate}%`,           color: '#2563eb',
+        sub: `${reachedUniqueCount}人 / ${uniqueCount}人` },
+      { icon: 'fa-fire',            label: '平均熱量',               value: avgHeat,                   color: '#d97706' },
+      { icon: 'fa-undo',            label: 'CO件数',                 value: `${coCount}件`,            color: '#dc2626' },
+      { icon: 'fa-star',            label: '口コミ共有済み',         value: `${sharedKuchikomi}件`,    color: '#f59e0b' },
+      { icon: 'fa-chart-pie',       label: 'CO率（シート）',         value: coRateStr,                 color: '#6b7280' },
     ];
 
     el.innerHTML = cards.map(c => `
@@ -405,6 +424,7 @@ const SurpriseCallPage = {
         <div>
           <div style="font-size:18px;font-weight:700;color:var(--gray-800)">${Utils.escHtml(String(c.value))}</div>
           <div style="font-size:10px;color:var(--gray-400);margin-top:1px">${c.label}</div>
+          ${c.sub ? `<div style="font-size:10px;color:var(--gray-400);margin-top:1px">${Utils.escHtml(c.sub)}</div>` : ''}
         </div>
       </div>
     `).join('');
