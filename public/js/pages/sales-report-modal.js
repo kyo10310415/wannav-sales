@@ -236,6 +236,16 @@ const SalesReportModal = {
                 placeholder="詳細を入力...">${Utils.escHtml(r.details || '')}</textarea>
             </div>
 
+            <!-- ⑭ EP提案あり -->
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+                <input type="checkbox" id="sr-ep-proposal"
+                  ${r.ep_proposal ? 'checked' : ''}
+                  style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer">
+                <span class="form-label" style="margin:0">EP提案あり</span>
+              </label>
+            </div>
+
           </form>
         </div>
         <div class="modal-footer">
@@ -310,6 +320,7 @@ const SalesReportModal = {
       decline_reasons:   this._getChecked('sr-decline-reasons'),
       phone_number:      document.getElementById('sr-phone').value.trim(),
       details:           document.getElementById('sr-details').value.trim(),
+      ep_proposal:       document.getElementById('sr-ep-proposal').checked ? 1 : 0,
     };
 
     try {

@@ -52,7 +52,8 @@ router.post('/', authenticateToken, (req, res) => {
     join_reasons,
     decline_reasons,
     phone_number,
-    details
+    details,
+    ep_proposal
   } = req.body;
 
   if (!interviewer_id || !applicant_full_name) {
@@ -71,8 +72,8 @@ router.post('/', authenticateToken, (req, res) => {
         stay_count, no_count, contract_plan,
         payment_method, notion_url, lesson_start_date,
         character_rights, join_reasons, decline_reasons, phone_number, details,
-        applicant_name_email
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        applicant_name_email, ep_proposal
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result_db = stmt.run(
@@ -85,7 +86,8 @@ router.post('/', authenticateToken, (req, res) => {
       Array.isArray(join_reasons) ? join_reasons.join(',') : (join_reasons || ''),
       Array.isArray(decline_reasons) ? decline_reasons.join(',') : (decline_reasons || ''),
       phone_number, details,
-      nameEmailKey
+      nameEmailKey,
+      ep_proposal ? 1 : 0
     );
 
     const report = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(result_db.lastInsertRowid);
@@ -110,7 +112,8 @@ router.put('/:id', authenticateToken, (req, res) => {
     student_number, interview_date, interview_content, result,
     stay_count, no_count, contract_plan,
     payment_method, notion_url, lesson_start_date,
-    character_rights, join_reasons, decline_reasons, phone_number, details
+    character_rights, join_reasons, decline_reasons, phone_number, details,
+    ep_proposal
   } = req.body;
 
   // 複合キーを生成（新しい氏名・メールで再生成）
@@ -131,8 +134,8 @@ router.put('/:id', authenticateToken, (req, res) => {
         stay_count, no_count, contract_plan,
         payment_method, notion_url, lesson_start_date,
         character_rights, join_reasons, decline_reasons, phone_number, details,
-        applicant_name_email, parent_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        applicant_name_email, parent_id, ep_proposal
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result_db = stmt.run(
@@ -158,7 +161,8 @@ router.put('/:id', authenticateToken, (req, res) => {
       phone_number ?? original.phone_number,
       details      ?? original.details,
       nameEmailKey,
-      rootId
+      rootId,
+      ep_proposal !== undefined ? (ep_proposal ? 1 : 0) : (original.ep_proposal ?? 0)
     );
 
     const newReport = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(result_db.lastInsertRowid);
