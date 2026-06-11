@@ -213,6 +213,13 @@ function initializeDatabase() {
     console.log('Migration: sales_reports.parent_id column added');
   }
 
+  // Migration: sales_reports に ep_proposal カラムを追加
+  //   EP提案ありの場合 1、なし（デフォルト）は 0
+  if (!srCols.includes('ep_proposal')) {
+    db.exec('ALTER TABLE sales_reports ADD COLUMN ep_proposal INTEGER DEFAULT 0');
+    console.log('Migration: sales_reports.ep_proposal column added');
+  }
+
   // Migration: idx_sr_name_email UNIQUE INDEX を削除（複数報告を許可するため）
   //   既に存在する場合のみ DROP（存在しなければスキップ）
   try {
