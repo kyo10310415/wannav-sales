@@ -151,6 +151,52 @@ router.post('/run', authenticateToken, async (req, res) => {
     notionProfiles.map(p => [p.student_number, p])
   );
 
+  // ── ②'' すくう君評価データ取得（期間フィルター込み） ──────────
+  const sukuukunEvals = db.prepare(`
+    SELECT
+      se.applicant_name, se.applicant_key,
+      se.evaluator_name, se.interviewer_name,
+      se.interview_result, se.total_score,
+      se.result_json,
+      DATE(se.created_at) as eval_date
+    FROM sukuukun_evaluations se
+    WHERE DATE(se.created_at) BETWEEN ? AND ?
+    ORDER BY se.created_at DESC
+    LIMIT 100
+  `).all(from, to);
+
+  // すくう君サマリー集計（担当者別・スコア帯別）
+  const sukuukunByInterviewer = {};
+  for (const e of sukuukunEvals) {
+    const name = e.interviewer_name || '不明';
+    if (!sukuukunByInterviewer[name]) sukuukunByInterviewer[name] = { count: 0, totalScore: 0, results: {} };
+    sukuukunByInterviewer[name].count++;
+    sukuukunByInterviewer[name].totalScore += (e.total_score || 0);
+    const res = e.interview_result || '不明';
+    sukuukunByInterviewer[name].results[res] = (sukuukunByInterviewer[name].results[res] || 0) + 1;
+  }
+  const sukuukunAvgScore = sukuukunEvals.length > 0
+    ? Math.round(sukuukunEvals.reduce((s, e) => s + (e.total_score || 0), 0) / sukuukunEvals.length * 10) / 10
+    : null;
+
+  // すくう君個別レコード（直近20件・result_jsonから主要評価を抽出）
+  const sukuukunRecords = sukuukunEvals.slice(0, 20).map(e => {
+    let evalSummary = '';
+    try {
+      const rj = typeof e.result_json === 'string' ? JSON.parse(e.result_json) : e.result_json;
+      if (rj && typeof rj === 'object') {
+        // スコアや評価コメントの主要項目を抽出
+        const parts = [];
+        if (rj.total_score != null) parts.push(`総合${rj.total_score}点`);
+        if (rj.summary)  parts.push(`評価:${String(rj.summary).slice(0, 60)}`);
+        if (rj.good_points)  parts.push(`良:${String(rj.good_points).slice(0, 40)}`);
+        if (rj.bad_points)   parts.push(`課:${String(rj.bad_points).slice(0, 40)}`);
+        evalSummary = parts.join(' / ');
+      }
+    } catch (_) { evalSummary = ''; }
+    return `[${e.eval_date}] 応募者:${e.applicant_name || '-'} 担当:${e.interviewer_name || '-'} スコア:${e.total_score ?? '-'}点 結果:${e.interview_result || '-'}${evalSummary ? ` ${evalSummary}` : ''}`;
+  }).join('\n');
+
   // ── ③ スプレッドシートキャッシュ取得・期間フィルター ────────
   const sheetApplicants = (spreadsheetCache && spreadsheetCache.data)
     ? spreadsheetCache.data.applicants : [];
@@ -540,7 +586,7 @@ router.post('/run', authenticateToken, async (req, res) => {
 
   const dataText = `
 【分析期間】${date_from || '全期間'} 〜 ${date_to || '現在'}
-【データ統合】営業報告DB ${totalReports}件 ＋ スプレッドシート ${sheetTotal}人（重複は営業報告を優先）＋ Notionプロファイル照合 ${notionMatchCount}件/${totalReports}件
+【データ統合】営業報告DB ${totalReports}件 ＋ スプレッドシート ${sheetTotal}人（重複は営業報告を優先）＋ Notionプロファイル照合 ${notionMatchCount}件/${totalReports}件 ＋ すくう君評価 ${sukuukunEvals.length}件
 
 【ファネル参考値（スプレッドシート）】※「面接予約→面接実施」の低転換は既知の構造的課題のため分析対象外
   応募者数:   ${sheetTotal}人
@@ -624,33 +670,43 @@ ${recentRecords || '  データなし'}
 
 【参考：直近${Math.min(20, sheetOnlyTotal)}件のシートのみ応募者（営業報告未記入・面接予約〜実施ボトルネックは分析対象外）】
 ${sheetOnlyRecords || '  データなし'}
+
+【すくう君AI評価サマリー（期間内 ${sukuukunEvals.length}件）】
+${sukuukunEvals.length === 0 ? '  データなし' : `  平均スコア: ${sukuukunAvgScore}点
+  担当者別集計:
+${Object.entries(sukuukunByInterviewer).sort((a,b)=>b[1].count-a[1].count).map(([name,d])=>{
+  const avg = d.count > 0 ? Math.round(d.totalScore/d.count*10)/10 : 0;
+  const resStr = Object.entries(d.results).sort((a,b)=>b[1]-a[1]).map(([r,n])=>`${r}:${n}件`).join('、');
+  return `    - ${name}: ${d.count}件 / 平均${avg}点 | 結果[${resStr}]`;
+}).join('\n')}`}
+
+【すくう君AI評価 直近${Math.min(20, sukuukunEvals.length)}件の個別レコード】
+${sukuukunRecords || '  データなし'}
 `.trim();
 
   // ── ⑤ Gemini呼び出し ──────────────────────────────────────
   const systemPrompt = `あなたはWannaVというVTuber養成スクールの営業データアナリストです。
-提供された集計済み営業データに対して、以下の統計手法を**必ず複数組み合わせて**論理的に分析してください。
+提供された集計済み営業データを用いて、**ユーザーの質問・依頼に直接答えること**を最優先に分析してください。
 
-【分析スコープの優先度（重要）】
-「面接予約」から「面接実施」の転換率が低いことは既知の構造的ボトルネックであり、チーム全体で認識済みです。
-この課題に関する言及は最小限（1行程度の事実確認のみ）にとどめ、分析の重点を以下に置いてください:
-  優先① 面接実施後の契約CVR改善（担当者別差異・STAY/NO回数・面接内容との相関など）
-  優先② クーリングオフ防止（属性・支払方法・面接内容との関連）
-  優先③ 応募〜書類通過の改善（広告媒体効果・性別・属性別CVR）
-  優先④ 契約者プロファイル分析（入会理由・Notion属性・Sales分類との相関）
-※「面接予約→面接実施」のボトルネック分析はfindings・next_actionsから除外してください。
+【分析の基本方針】
+- ユーザーが質問した内容・テーマに集中して分析すること。データ全体の総括は求めていません。
+- ユーザーが特定の期間・事象・指標を指定している場合は、その観点から深掘りしてください。
+- すくう君AI評価データが提供されている場合、ユーザーが参照を求めたときは積極的に活用してください。
+- 面接予約→面接実施のボトルネックは既知の構造的課題のため、特に言及を求められない限り触れないこと。
 
-【使用すべき統計手法】
+【使用すべき統計手法（質問に応じて適切に選択）】
 - 記述統計: 平均・中央値・標準偏差・最大最小・分布の把握
 - 比率差の検定（z検定相当）: 2グループ間のCVRや通過率の差が有意かどうかの評価
-- t検定（相当）: 担当者間・グループ間の数値指標（STAY数・NO数・CVR等）の平均差が有意かどうかの評価（n数が十分かどうかも考慮）
-- カイ二乗検定（相当）: カテゴリ変数（性別・媒体・面接内容など）と結果（契約/非契約）の関連性検定
-- 相関分析: STAY回数とCVR、NO回数とCVR、書類通過率と契約率などの相関係数（ピアソン相関相当）を推定
-- ロジスティック回帰分析（相当）: 契約に影響する要因（担当者・面接内容・STAY数・媒体・性別など）の相対的な寄与を推定し、オッズ比相当の解釈を行う
-- ファネル分析: 応募→書類通過→面接→CV→契約の各ステップ（「面接予約→面接実施」は参考値として軽く触れる程度にとどめる）
-- コホート比較: 期間・担当者・媒体などのセグメント間でのKPI比較
+- t検定（相当）: 担当者間・グループ間の数値指標の平均差の評価（n数も考慮）
+- カイ二乗検定（相当）: カテゴリ変数と結果の関連性検定
+- 相関分析: 数値変数間の相関係数推定
+- ロジスティック回帰分析（相当）: 契約に影響する要因の相対的寄与推定
+- ファネル分析: 各ステップの離脱率・変換率（面接予約→実施は参考値のみ）
+- コホート比較: 期間・担当者・媒体などのセグメント間KPI比較
+- 時系列比較: 週次・月次などの期間をまたいだ変動・傾向の把握
 
-※提供データは個票レベルではなく集計済みのため、正確な検定統計量の算出は不可です。
-  集計データから推定・解釈を行い、「有意差があると推測される」「相関が示唆される」など適切な表現を使用してください。
+※提供データは集計済みのため正確な検定統計量の算出は不可です。
+  推定・解釈を行い「有意差があると推測される」「相関が示唆される」など適切な表現を使用してください。
   n数が少ない場合は必ずその旨を注記してください。
 
 【出力フォーマット — 厳守】
