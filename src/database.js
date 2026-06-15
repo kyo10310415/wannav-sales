@@ -318,6 +318,17 @@ function initializeDatabase() {
     )
   `);
 
+  // Migration: notion_profiles に status / contract_plan カラムを追加
+  const npCols = db.prepare("PRAGMA table_info(notion_profiles)").all().map(c => c.name);
+  if (!npCols.includes('status')) {
+    db.exec('ALTER TABLE notion_profiles ADD COLUMN status TEXT');
+    console.log('Migration: notion_profiles.status column added');
+  }
+  if (!npCols.includes('contract_plan')) {
+    db.exec('ALTER TABLE notion_profiles ADD COLUMN contract_plan TEXT');
+    console.log('Migration: notion_profiles.contract_plan column added');
+  }
+
   // Check if admin user exists
   const adminExists = db.prepare("SELECT id FROM users WHERE login_id = 'admin'").get();
   if (!adminExists) {

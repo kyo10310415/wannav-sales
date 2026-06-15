@@ -1209,6 +1209,8 @@ const ApplicantsPage = {
       { key: 'desired_streaming',        label: 'N_やりたい配信' },
       { key: 'vtuber_passion',           label: 'N_熱量%' },
       { key: 'medical_history',          label: 'N_病歴' },
+      { key: 'status',                   label: 'N_ステータス' },
+      { key: 'contract_plan',            label: 'N_契約プラン' },
     ];
 
     // ── 営業報告の全カラム定義（出力順） ─────────────────────
