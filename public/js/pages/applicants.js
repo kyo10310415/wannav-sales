@@ -54,6 +54,12 @@ const ApplicantsPage = {
             title="Googleカレンダーから面接予約イベントを取得して面接日を自動設定">
             <i class="fas fa-calendar-alt"></i> カレンダー取得
           </button>
+          <button class="btn btn-sm"
+            style="background:#059669;border-color:#059669;color:white;white-space:nowrap"
+            onclick="ApplicantsPage.downloadCSV()"
+            title="現在の絞り込み条件でCSVダウンロード">
+            <i class="fas fa-file-csv"></i> CSVダウンロード
+          </button>
         </div>
       </div>
       <div class="page-body">
@@ -1138,5 +1144,177 @@ const ApplicantsPage = {
     } catch (e) {
       Utils.notify('履歴の取得に失敗しました: ' + e.message, 'error');
     }
+  },
+
+  // ──────────────────────────────────────────────────────────
+  // CSV ダウンロード
+  //   ・filteredApplicants（現在の絞り込み結果・全件）を出力
+  //   ・応募者基本情報 + 面接日 + 営業報告（全件展開）+ サプライズコール（全件展開）
+  // ──────────────────────────────────────────────────────────
+  downloadCSV() {
+    const list = this.filteredApplicants;
+    if (!list.length) {
+      Utils.notify('ダウンロードするデータがありません', 'error');
+      return;
+    }
+
+    // ── CSV セル値のエスケープ ─────────────────────────────────
+    const esc = v => {
+      const s = (v == null || v === '') ? '' : String(v);
+      // ダブルクォート・カンマ・改行を含む場合はダブルクォートで囲む
+      if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    };
+
+    // ── スプレッドシート由来のヘッダー（非表示列も含む全列） ──
+    const sheetHeaders = this.visibleHeaders;
+
+    // ── 営業報告の全カラム定義（出力順） ─────────────────────
+    const reportCols = [
+      { key: 'id',                label: '報告ID' },
+      { key: 'interviewer_name',  label: '面接担当者' },
+      { key: 'interview_date',    label: '面接日' },
+      { key: 'interview_content', label: '面接内容' },
+      { key: 'result',            label: '結果' },
+      { key: 'stay_count',        label: 'STAY回数' },
+      { key: 'no_count',          label: 'NO回数' },
+      { key: 'contract_plan',     label: '契約プラン' },
+      { key: 'payment_method',    label: '支払方法' },
+      { key: 'character_rights',  label: 'キャラクター権利' },
+      { key: 'join_reasons',      label: '入会理由' },
+      { key: 'decline_reasons',   label: '辞退理由' },
+      { key: 'phone_number',      label: '電話番号' },
+      { key: 'notion_url',        label: 'NotionURL' },
+      { key: 'lesson_start_date', label: 'レッスン開始日' },
+      { key: 'ep_proposal',       label: 'EP提案あり' },
+      { key: 'student_number',    label: '学籍番号' },
+      { key: 'details',           label: '詳細内容' },
+      { key: 'created_at',        label: '報告作成日時' },
+    ];
+
+    // ── サプライズコールの出力カラム定義 ─────────────────────
+    const scCols = [
+      { key: 'タイムスタンプ',                     label: 'SC_タイムスタンプ' },
+      { key: '架電時間帯',                         label: 'SC_架電時間帯' },
+      { key: '架電結果',                           label: 'SC_架電結果' },
+      { key: '入会の手続きの満足度',                label: 'SC_手続き満足度' },
+      { key: 'お手続きの中で不安に感じた点',        label: 'SC_不安に感じた点' },
+      { key: '一番気になるトピック',                label: 'SC_気になるトピック' },
+      { key: '担当者は信頼できるか？',              label: 'SC_担当者信頼度' },
+      { key: '担当者に対する評価の理由',            label: 'SC_担当者評価理由' },
+      { key: '今の熱量を0~10点で教えてください',   label: 'SC_熱量' },
+      { key: 'どんな景色を見たいと思っているか？',  label: 'SC_目標' },
+      { key: 'ステータス',                         label: 'SC_ステータス' },
+      { key: 'CO開け日（目安）',                   label: 'SC_CO開け日' },
+      { key: '合計点',                             label: 'SC_合計点' },
+      { key: '口コミ共有済み',                     label: 'SC_口コミ共有済み' },
+    ];
+
+    // ── 最大営業報告件数・最大SC件数を算出（ヘッダー行の列数決定） ─
+    let maxReports = 0;
+    let maxSc      = 0;
+    for (const a of list) {
+      const reps = this.getReportsForApplicant(a);
+      if (reps.length > maxReports) maxReports = reps.length;
+      const sn   = (reps[0]?.student_number || '').trim();
+      const sc   = sn ? (this.surpriseCallMap[sn] || []) : [];
+      if (sc.length > maxSc) maxSc = sc.length;
+    }
+    // 上限：報告20件、SC30件（異常値対策）
+    maxReports = Math.min(maxReports, 20);
+    maxSc      = Math.min(maxSc,      30);
+
+    // ── ヘッダー行を構築 ──────────────────────────────────────
+    const headerRow = [
+      '氏名',
+      'メールアドレス',
+      '面接日',
+      ...sheetHeaders,
+    ];
+    // 営業報告（N件分）
+    for (let i = 1; i <= maxReports; i++) {
+      for (const col of reportCols) {
+        headerRow.push(`報告${i}_${col.label}`);
+      }
+    }
+    // サプライズコール（N件分）
+    for (let i = 1; i <= maxSc; i++) {
+      for (const col of scCols) {
+        headerRow.push(col.label.replace('SC_', `SC${i}_`));
+      }
+    }
+
+    // ── データ行を構築 ────────────────────────────────────────
+    const dataRows = list.map(a => {
+      const appKey    = this._applicantKey(a);
+      const dateVal   = this.interviewDates[appKey] || '';
+      const allReps   = this.getReportsForApplicant(a);  // 新しい順
+      const studentNum = (allReps[0]?.student_number || '').trim();
+      const scAll     = studentNum ? (this.surpriseCallMap[studentNum] || []) : [];
+      // SC は新しいもの優先（タイムスタンプ降順）
+      const scSorted  = [...scAll].sort((x, y) =>
+        (y['タイムスタンプ'] || '').localeCompare(x['タイムスタンプ'] || '')
+      );
+
+      const row = [
+        a.full_name  || '',
+        a.email      || '',
+        dateVal,
+        // スプレッドシート列（全列 raw データ）
+        ...sheetHeaders.map((_, i) => {
+          const cell = a.visible_data?.[i];
+          return cell ? (cell.value || '') : '';
+        }),
+      ];
+
+      // 営業報告（最大 maxReports 件）
+      for (let i = 0; i < maxReports; i++) {
+        const rep = allReps[i] || null;
+        for (const col of reportCols) {
+          if (!rep) {
+            row.push('');
+          } else if (col.key === 'ep_proposal') {
+            row.push(rep.ep_proposal ? 'あり' : '');
+          } else {
+            row.push(rep[col.key] != null ? rep[col.key] : '');
+          }
+        }
+      }
+
+      // サプライズコール（最大 maxSc 件）
+      for (let i = 0; i < maxSc; i++) {
+        const sc = scSorted[i] || null;
+        for (const col of scCols) {
+          row.push(sc ? (sc[col.key] || '') : '');
+        }
+      }
+
+      return row;
+    });
+
+    // ── BOM + CSV 文字列を生成 ────────────────────────────────
+    const BOM = '\uFEFF';  // Excel での文字化け防止
+    const csvLines = [headerRow, ...dataRows].map(
+      row => row.map(esc).join(',')
+    );
+    const csvStr = BOM + csvLines.join('\r\n');
+
+    // ── ダウンロード実行 ──────────────────────────────────────
+    const blob    = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
+    const url     = URL.createObjectURL(blob);
+    const a       = document.createElement('a');
+    const now     = new Date();
+    const ts      = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+    a.href        = url;
+    a.download    = `応募者一覧_${ts}.csv`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    Utils.notify(`CSVをダウンロードしました（${list.length}件）`, 'success');
   }
 };
