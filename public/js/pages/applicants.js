@@ -5,6 +5,7 @@ const ApplicantsPage = {
   reports: [],
   interviewDates: {}, // { applicant_key: 'YYYY-MM-DD' }
   surpriseCallMap: {}, // { student_number: [row, ...] } サプライズコール紐づけ
+  notionProfileMap: {}, // { student_number: notionProfile } Notionプロファイル紐づけ
   visibleHeaders: [],
   currentPage: 1,
   perPage: 20,
@@ -222,11 +223,12 @@ const ApplicantsPage = {
 
     try {
       const params = useCache ? {} : { refresh: '1' };
-      const [sheetData, reportsData, datesData, scData] = await Promise.all([
+      const [sheetData, reportsData, datesData, scData, notionData] = await Promise.all([
         API.spreadsheet.applicants(params),
         API.salesReports.list(),
         API.interviewDates.list(),
         API.surpriseCall.list().catch(() => ({ rows: [] })),
+        API.notion.profiles().catch(() => []),
       ]);
       this.applicants = sheetData.applicants || [];
       this.visibleHeaders = sheetData.visibleHeaders || [];
@@ -239,6 +241,12 @@ const ApplicantsPage = {
         if (!sn) continue;
         if (!this.surpriseCallMap[sn]) this.surpriseCallMap[sn] = [];
         this.surpriseCallMap[sn].push(row);
+      }
+      // Notionプロファイル: student_number → プロファイルのMap構築
+      this.notionProfileMap = {};
+      for (const p of (Array.isArray(notionData) ? notionData : [])) {
+        const sn = (p.student_number || '').trim();
+        if (sn) this.notionProfileMap[sn] = p;
       }
       this.cacheInfo = {
         cached: sheetData.cached,
@@ -1149,7 +1157,7 @@ const ApplicantsPage = {
   // ──────────────────────────────────────────────────────────
   // CSV ダウンロード
   //   ・filteredApplicants（現在の絞り込み結果・全件）を出力
-  //   ・応募者基本情報 + 面接日 + 営業報告（全件展開）+ サプライズコール（全件展開）
+  //   ・応募者基本情報 + 面接日 + Notionプロファイル + 営業報告（全件展開）+ サプライズコール（全件展開）
   // ──────────────────────────────────────────────────────────
   downloadCSV() {
     const list = this.filteredApplicants;
@@ -1170,6 +1178,38 @@ const ApplicantsPage = {
 
     // ── スプレッドシート由来のヘッダー（非表示列も含む全列） ──
     const sheetHeaders = this.visibleHeaders;
+
+    // ── Notionプロファイルのカラム定義（出力順） ─────────────
+    const notionCols = [
+      { key: 'gender',                   label: 'N_性別' },
+      { key: 'birth_date',               label: 'N_生年月日' },
+      { key: 'final_education',          label: 'N_最終学歴' },
+      { key: 'current_job',              label: 'N_現職' },
+      { key: 'job_type',                 label: 'N_職種' },
+      { key: 'monthly_income',           label: 'N_月収' },
+      { key: 'disposable_income',        label: 'N_可処分所得' },
+      { key: 'savings',                  label: 'N_貯蓄' },
+      { key: 'debt',                     label: 'N_借金' },
+      { key: 'has_card',                 label: 'N_カード有無' },
+      { key: 'work_history',             label: 'N_職歴' },
+      { key: 'part_time_history',        label: 'N_バイト歴' },
+      { key: 'prefecture',               label: 'N_都道府県' },
+      { key: 'cohabitants',              label: 'N_同居人' },
+      { key: 'has_partner',              label: 'N_パートナー有無' },
+      { key: 'partner_understanding',    label: 'N_パートナー理解' },
+      { key: 'sales_classification',     label: 'N_Sales3分類' },
+      { key: 'has_streaming_experience', label: 'N_配信経験' },
+      { key: 'streaming_history',        label: 'N_配信歴' },
+      { key: 'streaming_equipment',      label: 'N_配信機材' },
+      { key: 'motivation',               label: 'N_志望動機' },
+      { key: 'company_reason',           label: 'N_企業が良い理由' },
+      { key: 'contribution',             label: 'N_貢献できること' },
+      { key: 'vtuber_effort',            label: 'N_VTuberの努力' },
+      { key: 'other_auditions',          label: 'N_他オーディション' },
+      { key: 'desired_streaming',        label: 'N_やりたい配信' },
+      { key: 'vtuber_passion',           label: 'N_熱量%' },
+      { key: 'medical_history',          label: 'N_病歴' },
+    ];
 
     // ── 営業報告の全カラム定義（出力順） ─────────────────────
     const reportCols = [
@@ -1232,6 +1272,8 @@ const ApplicantsPage = {
       'メールアドレス',
       '面接日',
       ...sheetHeaders,
+      // Notionプロファイル（固定28列）
+      ...notionCols.map(c => c.label),
     ];
     // 営業報告（N件分）
     for (let i = 1; i <= maxReports; i++) {
@@ -1258,6 +1300,9 @@ const ApplicantsPage = {
         (y['タイムスタンプ'] || '').localeCompare(x['タイムスタンプ'] || '')
       );
 
+      // Notionプロファイルを学籍番号で引く（報告の学籍番号優先、なければスキップ）
+      const notionProfile = this.notionProfileMap[studentNum] || null;
+
       const row = [
         a.full_name  || '',
         a.email      || '',
@@ -1267,6 +1312,8 @@ const ApplicantsPage = {
           const cell = a.visible_data?.[i];
           return cell ? (cell.value || '') : '';
         }),
+        // Notionプロファイル（28列）
+        ...notionCols.map(c => notionProfile ? (notionProfile[c.key] ?? '') : ''),
       ];
 
       // 営業報告（最大 maxReports 件）
