@@ -18,6 +18,8 @@ const db      = require('../database');
 const { authenticateToken } = require('../middleware/auth');
 const spreadsheetRoute = require('./spreadsheet');
 const spreadsheetCache = spreadsheetRoute.cache;
+const surpriseCallRoute = require('./surpriseCall');
+const surpriseCallCache = surpriseCallRoute.cache;
 
 // ── スプレッドシート書き込み用クライアント ──────────────────
 async function getWritableSheetsClient() {
@@ -150,6 +152,94 @@ router.post('/run', authenticateToken, async (req, res) => {
   const notionByStudentNum = new Map(
     notionProfiles.map(p => [p.student_number, p])
   );
+
+  // ── ②''' サプライズコールデータ取得（キャッシュから・期間フィルター）──
+  const scAllRows = (surpriseCallCache && surpriseCallCache.rows) ? surpriseCallCache.rows : [];
+  // タイムスタンプで期間フィルター（例: "2026/06/01 10:30:00" 形式）
+  const scInPeriod = scAllRows.filter(r => {
+    const ts = r['タイムスタンプ'] || '';
+    if (!ts) return false;
+    const dateStr = ts.slice(0, 10).replace(/\//g, '-');
+    return dateStr >= from && dateStr <= to;
+  });
+
+  // 架電結果別集計
+  const scByResult = {};
+  for (const r of scInPeriod) {
+    const res = r['架電結果'] || '未記入';
+    scByResult[res] = (scByResult[res] || 0) + 1;
+  }
+
+  // ステータス別集計
+  const scByStatus = {};
+  for (const r of scInPeriod) {
+    const s = r['ステータス'] || '未記入';
+    scByStatus[s] = (scByStatus[s] || 0) + 1;
+  }
+
+  // 熱量（0〜10）統計
+  const scHeatValues = scInPeriod
+    .map(r => parseFloat(r['今の熱量を0~10点で教えてください'] || ''))
+    .filter(v => !isNaN(v));
+  const scAvgHeat = scHeatValues.length > 0
+    ? Math.round(scHeatValues.reduce((s, v) => s + v, 0) / scHeatValues.length * 10) / 10
+    : null;
+
+  // 架電時間帯別集計
+  const scByTimeSlot = {};
+  for (const r of scInPeriod) {
+    const t = r['架電時間帯'] || '未記入';
+    scByTimeSlot[t] = (scByTimeSlot[t] || 0) + 1;
+  }
+
+  // ユニーク学籍番号数
+  const scUniqueStudents = new Set(
+    scInPeriod.map(r => (r['学籍番号'] || '').trim()).filter(Boolean)
+  );
+  const scUniqueCount = scUniqueStudents.size;
+
+  // 繋がった件数（通話 or 繋がった）
+  const scReached = scInPeriod.filter(r =>
+    r['架電結果'] === '通話' || r['架電結果'] === '繋がった'
+  );
+  const scReachedUniqueStudents = new Set(
+    scReached.map(r => (r['学籍番号'] || '').trim()).filter(Boolean)
+  );
+  const scReachRate = scUniqueCount > 0
+    ? Math.round(scReachedUniqueStudents.size / scUniqueCount * 100) : 0;
+
+  // CO件数・CO率
+  const scCoRows = scInPeriod.filter(r => {
+    const s = r['ステータス'] || '';
+    return s === 'CO' || s === 'クーリングオフ';
+  });
+  const scCoRate = scUniqueCount > 0
+    ? (scCoRows.length / scUniqueCount * 100).toFixed(1) : '0.0';
+
+  // 口コミ共有済み
+  const scSharedKuchikomi = scInPeriod.filter(r =>
+    r['口コミ共有済み'] === '済' || r['口コミ共有済み'] === 'TRUE' || r['口コミ共有済み'] === '1'
+  ).length;
+
+  // 担当者信頼度評価
+  const scTrustCount = {};
+  for (const r of scInPeriod) {
+    const trust = r['担当者は信頼できるか？'] || '未回答';
+    scTrustCount[trust] = (scTrustCount[trust] || 0) + 1;
+  }
+
+  // 直近20件の個別レコード
+  const scRecentRecords = scInPeriod.slice(0, 20).map(r =>
+    `[${(r['タイムスタンプ'] || '').slice(0, 10)}] ` +
+    `学籍:${r['学籍番号'] || '-'} ` +
+    `時間帯:${r['架電時間帯'] || '-'} ` +
+    `架電結果:${r['架電結果'] || '-'} ` +
+    `熱量:${r['今の熱量を0~10点で教えてください'] || '-'} ` +
+    `ステータス:${r['ステータス'] || '-'} ` +
+    (r['担当者は信頼できるか？'] ? `信頼度:${r['担当者は信頼できるか？']} ` : '') +
+    (r['口コミ共有済み'] ? `口コミ:${r['口コミ共有済み']} ` : '') +
+    (r['お手続きの中で不安に感じた点'] ? `不安点:${r['お手続きの中で不安に感じた点'].slice(0, 40)}` : '')
+  ).join('\n');
 
   // ── ②'' すくう君評価データ取得（期間フィルター込み） ──────────
   const sukuukunEvals = db.prepare(`
@@ -586,7 +676,7 @@ router.post('/run', authenticateToken, async (req, res) => {
 
   const dataText = `
 【分析期間】${date_from || '全期間'} 〜 ${date_to || '現在'}
-【データ統合】営業報告DB ${totalReports}件 ＋ スプレッドシート ${sheetTotal}人（重複は営業報告を優先）＋ Notionプロファイル照合 ${notionMatchCount}件/${totalReports}件 ＋ すくう君評価 ${sukuukunEvals.length}件
+【データ統合】営業報告DB ${totalReports}件 ＋ スプレッドシート ${sheetTotal}人（重複は営業報告を優先）＋ Notionプロファイル照合 ${notionMatchCount}件/${totalReports}件 ＋ すくう君評価 ${sukuukunEvals.length}件 ＋ サプライズコール ${scInPeriod.length}件（ユニーク${scUniqueCount}人）
 
 【ファネル参考値（スプレッドシート）】※「面接予約→面接実施」の低転換は既知の構造的課題のため分析対象外
   応募者数:   ${sheetTotal}人
@@ -670,6 +760,23 @@ ${recentRecords || '  データなし'}
 
 【参考：直近${Math.min(20, sheetOnlyTotal)}件のシートのみ応募者（営業報告未記入・面接予約〜実施ボトルネックは分析対象外）】
 ${sheetOnlyRecords || '  データなし'}
+
+【サプライズコールサマリー（期間内 ${scInPeriod.length}件 / ユニーク${scUniqueCount}人）】
+${scInPeriod.length === 0 ? '  データなし（キャッシュ未取得または期間内データなし）' : `  架電到達率（ユニーク）: ${scReachRate}%（${scReachedUniqueStudents.size}人 / ${scUniqueCount}人）
+  平均熱量: ${scAvgHeat !== null ? scAvgHeat + '点' : 'データなし'}
+  CO件数: ${scCoRows.length}件 / CO率: ${scCoRate}%（${scCoRows.length}件 / ${scUniqueCount}人）
+  口コミ共有済み: ${scSharedKuchikomi}件
+  架電結果別:
+${Object.entries(scByResult).sort((a,b)=>b[1]-a[1]).map(([r,n])=>`    - ${r}: ${n}件`).join('\n')}
+  ステータス別:
+${Object.entries(scByStatus).sort((a,b)=>b[1]-a[1]).map(([s,n])=>`    - ${s}: ${n}件`).join('\n')}
+  架電時間帯別:
+${Object.entries(scByTimeSlot).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`    - ${t}: ${n}件`).join('\n')}
+  担当者信頼度評価:
+${Object.entries(scTrustCount).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`    - ${t}: ${n}件`).join('\n')}`}
+
+【サプライズコール 直近${Math.min(20, scInPeriod.length)}件の個別レコード】
+${scRecentRecords || '  データなし'}
 
 【すくう君AI評価サマリー（期間内 ${sukuukunEvals.length}件）】
 ${sukuukunEvals.length === 0 ? '  データなし' : `  平均スコア: ${sukuukunAvgScore}点
