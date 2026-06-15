@@ -73,6 +73,8 @@ function mapPageToRecord(page) {
     desired_streaming:         g('やってみたい配信'),
     vtuber_passion:            g('VTuberへの熱量%'),
     medical_history:           g('病歴'),
+    status:                    g('ステータス'),
+    contract_plan:             g('契約プラン'),
     raw_json:                  JSON.stringify(p),
     synced_at:                 new Date().toISOString(),
   };
@@ -128,7 +130,7 @@ async function syncNotionProfiles() {
        sales_classification, has_streaming_experience, streaming_history,
        streaming_equipment, motivation, company_reason, contribution,
        vtuber_effort, other_auditions, desired_streaming, vtuber_passion,
-       medical_history, raw_json, synced_at)
+       medical_history, status, contract_plan, raw_json, synced_at)
     VALUES
       (@student_number, @notion_page_id, @gender, @birth_date, @final_education,
        @current_job, @job_type, @monthly_income, @disposable_income,
@@ -137,7 +139,7 @@ async function syncNotionProfiles() {
        @sales_classification, @has_streaming_experience, @streaming_history,
        @streaming_equipment, @motivation, @company_reason, @contribution,
        @vtuber_effort, @other_auditions, @desired_streaming, @vtuber_passion,
-       @medical_history, @raw_json, @synced_at)
+       @medical_history, @status, @contract_plan, @raw_json, @synced_at)
     ON CONFLICT(student_number) DO UPDATE SET
       notion_page_id           = excluded.notion_page_id,
       gender                   = excluded.gender,
@@ -168,6 +170,8 @@ async function syncNotionProfiles() {
       desired_streaming        = excluded.desired_streaming,
       vtuber_passion           = excluded.vtuber_passion,
       medical_history          = excluded.medical_history,
+      status                   = excluded.status,
+      contract_plan            = excluded.contract_plan,
       raw_json                 = excluded.raw_json,
       synced_at                = excluded.synced_at
   `);

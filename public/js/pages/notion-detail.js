@@ -38,6 +38,8 @@ const NotionDetailPage = {
     { label: 'やりたい配信',      key: 'desired_streaming' },
     { label: '熱量%',             key: 'vtuber_passion' },
     { label: '病歴',              key: 'medical_history' },
+    { label: 'ステータス',        key: 'status' },
+    { label: '契約プラン',        key: 'contract_plan' },
   ],
 
   render() {
