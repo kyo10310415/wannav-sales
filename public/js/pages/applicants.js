@@ -7,6 +7,7 @@ const ApplicantsPage = {
   surpriseCallMap: {}, // { student_number: [row, ...] } サプライズコール紐づけ
   notionProfileMap: {}, // { student_number: notionProfile } Notionプロファイル紐づけ
   visibleHeaders: [],
+  allSheetHeaders: [], // 非表示列を含む全列ヘッダー（rawキー順）
   currentPage: 1,
   perPage: 20,
   error: null,
@@ -232,6 +233,7 @@ const ApplicantsPage = {
       ]);
       this.applicants = sheetData.applicants || [];
       this.visibleHeaders = sheetData.visibleHeaders || [];
+      this.allSheetHeaders = sheetData.headers || [];
       this.reports = reportsData || [];
       this.interviewDates = datesData || {};
       // サプライズコール: student_number → 架電記録配列のMap構築
@@ -1176,8 +1178,11 @@ const ApplicantsPage = {
       return s;
     };
 
-    // ── スプレッドシート由来のヘッダー（非表示列も含む全列） ──
-    const sheetHeaders = this.visibleHeaders;
+    // ── スプレッドシート全列ヘッダー（非表示列含む、rawキー順） ──
+    // allSheetHeaders があればそれを使い、自己PRなど非表示列もCSVに含める
+    const sheetHeaders = this.allSheetHeaders.length
+      ? this.allSheetHeaders
+      : this.visibleHeaders;
 
     // ── Notionプロファイルのカラム定義（出力順） ─────────────
     const notionCols = [
@@ -1309,11 +1314,8 @@ const ApplicantsPage = {
         a.full_name  || '',
         a.email      || '',
         dateVal,
-        // スプレッドシート列（全列 raw データ）
-        ...sheetHeaders.map((_, i) => {
-          const cell = a.visible_data?.[i];
-          return cell ? (cell.value || '') : '';
-        }),
+        // スプレッドシート列（非表示含む全列を raw から取得）
+        ...sheetHeaders.map(h => (a.raw ? (a.raw[h] ?? '') : '')),
         // Notionプロファイル（28列）
         ...notionCols.map(c => notionProfile ? (notionProfile[c.key] ?? '') : ''),
       ];
