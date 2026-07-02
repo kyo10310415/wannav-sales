@@ -47,13 +47,13 @@ const SukuukunHistoryModal = {
         ? `<span style="font-size:10px;background:${e.interview_result==='契約'?'#dcfce7':e.interview_result==='辞退'?'#fee2e2':'#fef3c7'};color:${e.interview_result==='契約'?'#166534':e.interview_result==='辞退'?'#991b1b':'#92400e'};border-radius:4px;padding:1px 6px;font-weight:600">${Utils.escHtml(e.interview_result)}</span>`
         : '';
       return `
-        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6;cursor:pointer;transition:background 0.15s"
-          onmouseover="this.style.background='#fffbeb'" onmouseout="this.style.background=''"
-          onclick="SukuukunHistoryModal._showEvalDetail(${e.id})">
-          <div style="width:44px;height:44px;border-radius:50%;background:${color}18;border:2px solid ${color};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6;transition:background 0.15s"
+          onmouseover="this.style.background='#fffbeb'" onmouseout="this.style.background=''">
+          <div style="width:44px;height:44px;border-radius:50%;background:${color}18;border:2px solid ${color};display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer"
+            onclick="SukuukunHistoryModal._showEvalDetail(${e.id})">
             <span style="font-size:16px;font-weight:800;color:${color}">${score}</span>
           </div>
-          <div style="flex:1;min-width:0">
+          <div style="flex:1;min-width:0;cursor:pointer" onclick="SukuukunHistoryModal._showEvalDetail(${e.id})">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <span style="font-size:12px;font-weight:600;color:#374151">${Utils.escHtml(e.interviewer_name || '担当者不明')}</span>
               ${result}
@@ -63,7 +63,16 @@ const SukuukunHistoryModal = {
               ${e.transcript_length ? `　<i class="fas fa-file-alt" style="margin-right:3px"></i>${e.transcript_length.toLocaleString()}文字` : ''}
             </div>
           </div>
-          <div style="color:#d1d5db;font-size:12px"><i class="fas fa-chevron-right"></i></div>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+            <div style="color:#d1d5db;font-size:12px;cursor:pointer" onclick="SukuukunHistoryModal._showEvalDetail(${e.id})"><i class="fas fa-chevron-right"></i></div>
+            <button onclick="event.stopPropagation();SukuukunHistoryModal._deleteEval(${e.id})"
+              title="この採点を削除"
+              style="background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:4px;color:#fca5a5;font-size:13px;line-height:1;transition:all 0.15s"
+              onmouseover="this.style.color='#dc2626';this.style.background='#fee2e2'"
+              onmouseout="this.style.color='#fca5a5';this.style.background='none'">
+              <i class="fas fa-trash-alt"></i>
+            </button>
+          </div>
         </div>`;
     }).join('');
 
@@ -75,14 +84,13 @@ const SukuukunHistoryModal = {
         `<div style="font-size:10px;color:#6b7280;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">💡 ${Utils.escHtml(a)}</div>`
       ).join('');
       return `
-        <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6;cursor:pointer;transition:background 0.15s"
-          onmouseover="this.style.background='#f5f3ff'" onmouseout="this.style.background=''"
-          onclick="SukuukunHistoryModal._showSpeechDetail(${s.id})">
-          <div style="flex-shrink:0;text-align:center;min-width:48px">
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6;transition:background 0.15s"
+          onmouseover="this.style.background='#f5f3ff'" onmouseout="this.style.background=''">
+          <div style="flex-shrink:0;text-align:center;min-width:48px;cursor:pointer" onclick="SukuukunHistoryModal._showSpeechDetail(${s.id})">
             <div style="font-size:18px;font-weight:800;color:${salesColor}">${s.sales_ratio ?? '-'}%</div>
             <div style="font-size:9px;color:#9ca3af">営業比率</div>
           </div>
-          <div style="flex:1;min-width:0">
+          <div style="flex:1;min-width:0;cursor:pointer" onclick="SukuukunHistoryModal._showSpeechDetail(${s.id})">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <span style="font-size:12px;font-weight:600;color:#374151">${Utils.escHtml(s.interviewer_name || '担当者不明')}</span>
             </div>
@@ -92,7 +100,16 @@ const SukuukunHistoryModal = {
             </div>
             ${actions}
           </div>
-          <div style="color:#d1d5db;font-size:12px"><i class="fas fa-chevron-right"></i></div>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+            <div style="color:#d1d5db;font-size:12px;cursor:pointer" onclick="SukuukunHistoryModal._showSpeechDetail(${s.id})"><i class="fas fa-chevron-right"></i></div>
+            <button onclick="event.stopPropagation();SukuukunHistoryModal._deleteSpeech(${s.id})"
+              title="この発話分析を削除"
+              style="background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:4px;color:#c4b5fd;font-size:13px;line-height:1;transition:all 0.15s"
+              onmouseover="this.style.color='#7c3aed';this.style.background='#ede9fe'"
+              onmouseout="this.style.color='#c4b5fd';this.style.background='none'">
+              <i class="fas fa-trash-alt"></i>
+            </button>
+          </div>
         </div>`;
     }).join('');
 
@@ -271,6 +288,14 @@ const SukuukunHistoryModal = {
             <div style="font-size:42px;font-weight:800;color:${color};line-height:1">${total}</div>
             <div style="font-size:11px;color:#6b7280">/ 100点</div>
           </div>
+          <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+            <button onclick="SukuukunHistoryModal._deleteEval(${id})"
+              style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;color:#dc2626;font-size:11px;padding:4px 10px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all 0.15s"
+              onmouseover="this.style.background='#fecaca';this.style.borderColor='#dc2626'"
+              onmouseout="this.style.background='#fee2e2';this.style.borderColor='#fca5a5'">
+              <i class="fas fa-trash-alt"></i> この採点を削除
+            </button>
+          </div>
           ${templateSection}
           ${eval_.summary ? `
             <div style="margin-bottom:10px;padding:10px;background:#eff6ff;border-radius:6px;border-left:3px solid #3b82f6">
@@ -326,6 +351,15 @@ const SukuukunHistoryModal = {
 
     body.innerHTML = backHtml + `
       <div style="padding:14px 16px">
+        <!-- 削除ボタン -->
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+          <button onclick="SukuukunHistoryModal._deleteSpeech(${id})"
+            style="background:#ede9fe;border:1px solid #c4b5fd;border-radius:6px;color:#7c3aed;font-size:11px;padding:4px 10px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all 0.15s"
+            onmouseover="this.style.background='#ddd6fe';this.style.borderColor='#7c3aed'"
+            onmouseout="this.style.background='#ede9fe';this.style.borderColor='#c4b5fd'">
+            <i class="fas fa-trash-alt"></i> この分析を削除
+          </button>
+        </div>
         <!-- メタ -->
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;font-size:10px">
           ${s.interviewer_name ? `<span style="background:#eff6ff;color:#1e40af;border-radius:8px;padding:2px 8px;font-weight:600">🎙️ ${Utils.escHtml(s.interviewer_name)}</span>` : ''}
@@ -367,6 +401,50 @@ const SukuukunHistoryModal = {
           <div style="font-size:11px;font-weight:600;color:#374151;margin-bottom:6px"><i class="fas fa-tasks" style="color:#16a34a;margin-right:4px"></i>改善アクション</div>
           ${actionsHtml}` : ''}
       </div>`;
+  },
+
+  // ── 採点履歴削除 ──
+  async _deleteEval(id) {
+    if (!confirm('この採点履歴を削除しますか？\nこの操作は取り消せません。')) return;
+    try {
+      await API.history.deleteEval(id);
+      // キャッシュから削除
+      this._cachedEvals = (this._cachedEvals || []).filter(e => e.id !== id);
+      if (this._lastOpenArgs) {
+        const [name, data] = this._lastOpenArgs;
+        const newData = { ...data, evaluations: this._cachedEvals, speeches: this._cachedSpeeches || [] };
+        this._lastOpenArgs = [name, newData];
+        this.close();
+        this.open(name, newData);
+      } else {
+        this.close();
+      }
+      Utils.notify('採点履歴を削除しました', 'success');
+    } catch (e) {
+      Utils.notify('削除に失敗しました: ' + e.message, 'error');
+    }
+  },
+
+  // ── 発話分析削除 ──
+  async _deleteSpeech(id) {
+    if (!confirm('この発話比率分析を削除しますか？\nこの操作は取り消せません。')) return;
+    try {
+      await API.history.deleteSpeech(id);
+      // キャッシュから削除
+      this._cachedSpeeches = (this._cachedSpeeches || []).filter(s => s.id !== id);
+      if (this._lastOpenArgs) {
+        const [name, data] = this._lastOpenArgs;
+        const newData = { ...data, evaluations: this._cachedEvals || [], speeches: this._cachedSpeeches };
+        this._lastOpenArgs = [name, newData];
+        this.close();
+        this.open(name, newData);
+      } else {
+        this.close();
+      }
+      Utils.notify('発話比率分析を削除しました', 'success');
+    } catch (e) {
+      Utils.notify('削除に失敗しました: ' + e.message, 'error');
+    }
   },
 
   // ── 一覧に戻る（再レンダリングせず、保存済みのデータで戻す） ──

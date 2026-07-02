@@ -3,6 +3,7 @@ const SalesReportModal = {
   applicant: null,
   salesUsers: [],
   editingReport: null,
+  editMode: 'overwrite', // 'overwrite'=内容編集（上書き）, 'append'=追記・新規報告
 
   // ── 選択肢定数 ──────────────────────────────────────────────
   INTERVIEW_CONTENT_OPTIONS: [
@@ -61,11 +62,12 @@ const SalesReportModal = {
   async open(applicant, existingReport = null) {
     this.applicant = applicant;
     this.editingReport = existingReport;
+    this.editMode = 'overwrite'; // 編集時はデフォルト「上書き」
 
     try {
       this.salesUsers = await API.users.sales();
     } catch (e) {
-      this.salesUsers = [];
+      this.salesUsers = []
     }
 
     this.renderModal();
@@ -99,18 +101,38 @@ const SalesReportModal = {
           <div>
             <div class="modal-title">
               <i class="fas fa-clipboard-list" style="color:var(--primary);margin-right:8px"></i>
-              ${this.editingReport ? '営業報告を追記' : '営業報告入力'}
+              ${this.editingReport ? '営業報告を編集' : '営業報告入力'}
             </div>
             <div style="font-size:12px;color:var(--gray-500);margin-top:2px">
               対象: ${Utils.escHtml(fullName)}
               ${applicant?.email ? `(${Utils.escHtml(applicant.email)})` : ''}
-              ${this.editingReport ? `<span style="background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600;margin-left:6px"><i class="fas fa-history" style="margin-right:3px"></i>追記 (元ID: ${this.editingReport.id})</span>` : ''}
             </div>
           </div>
           <button class="modal-close" id="sr-close"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body" style="max-height:75vh;overflow-y:auto">
           <div id="sr-error" style="display:none"></div>
+
+          ${this.editingReport ? `
+          <!-- 編集モード選択 -->
+          <div style="margin:0 0 14px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <span style="font-size:12px;font-weight:600;color:#374151;white-space:nowrap">編集モード：</span>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;padding:6px 12px;border-radius:6px;border:2px solid transparent;background:white;transition:all 0.15s" id="sr-mode-overwrite-label">
+              <input type="radio" name="sr-edit-mode" value="overwrite" checked
+                style="accent-color:var(--primary);width:15px;height:15px"
+                onchange="SalesReportModal._setEditMode('overwrite')">
+              <span><i class="fas fa-pen" style="margin-right:4px;color:#2563eb"></i><strong>内容を修正</strong></span>
+              <span style="font-size:11px;color:#6b7280">（この報告を上書き）</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;padding:6px 12px;border-radius:6px;border:2px solid transparent;background:white;transition:all 0.15s" id="sr-mode-append-label">
+              <input type="radio" name="sr-edit-mode" value="append"
+                style="accent-color:var(--primary);width:15px;height:15px"
+                onchange="SalesReportModal._setEditMode('append')">
+              <span><i class="fas fa-plus-circle" style="margin-right:4px;color:#059669"></i><strong>追記・新規報告</strong></span>
+              <span style="font-size:11px;color:#6b7280">（新しい報告として追加）</span>
+            </label>
+          </div>` : ''}
+
           <form id="sr-form">
 
             <!-- ① 面接担当者 / 氏名 -->
@@ -251,7 +273,8 @@ const SalesReportModal = {
         <div class="modal-footer">
           <button class="btn btn-secondary" id="sr-cancel">キャンセル</button>
           <button class="btn btn-primary" id="sr-save">
-            <i class="fas fa-${this.editingReport ? 'plus-circle' : 'save'}"></i> ${this.editingReport ? '追記保存' : '保存'}
+            <i class="fas fa-${this.editingReport ? 'pen' : 'save'}"></i>
+            <span id="sr-save-label">${this.editingReport ? '上書き保存' : '保存'}</span>
           </button>
         </div>
       </div>
@@ -266,6 +289,41 @@ const SalesReportModal = {
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) this.close();
     });
+
+    // 初期モード表示を適用
+    if (this.editingReport) this._applyEditModeStyle();
+  },
+
+  _setEditMode(mode) {
+    this.editMode = mode;
+    this._applyEditModeStyle();
+  },
+
+  _applyEditModeStyle() {
+    const isOverwrite = this.editMode === 'overwrite';
+    const overwriteLabel = document.getElementById('sr-mode-overwrite-label');
+    const appendLabel    = document.getElementById('sr-mode-append-label');
+    const saveLabel      = document.getElementById('sr-save-label');
+    const saveBtn        = document.getElementById('sr-save');
+    if (overwriteLabel) {
+      overwriteLabel.style.borderColor = isOverwrite ? '#2563eb' : 'transparent';
+      overwriteLabel.style.background  = isOverwrite ? '#eff6ff' : 'white';
+    }
+    if (appendLabel) {
+      appendLabel.style.borderColor = !isOverwrite ? '#059669' : 'transparent';
+      appendLabel.style.background  = !isOverwrite ? '#f0fdf4' : 'white';
+    }
+    if (saveLabel) {
+      saveLabel.textContent = isOverwrite ? '上書き保存' : '追記保存';
+    }
+    if (saveBtn) {
+      const icon = saveBtn.querySelector('i');
+      if (icon) {
+        icon.className = isOverwrite ? 'fas fa-pen' : 'fas fa-plus-circle';
+      }
+      saveBtn.style.background   = isOverwrite ? '' : '#059669';
+      saveBtn.style.borderColor  = isOverwrite ? '' : '#059669';
+    }
   },
 
   // ── チェックボックスの選択値をCSV文字列で取得 ─────────────────
@@ -325,8 +383,13 @@ const SalesReportModal = {
 
     try {
       if (this.editingReport) {
-        await API.salesReports.update(this.editingReport.id, payload);
-        Utils.notify('営業報告を追記しました', 'success');
+        if (this.editMode === 'overwrite') {
+          await API.salesReports.overwrite(this.editingReport.id, payload);
+          Utils.notify('営業報告を修正しました', 'success');
+        } else {
+          await API.salesReports.update(this.editingReport.id, payload);
+          Utils.notify('営業報告を追記しました', 'success');
+        }
       } else {
         await API.salesReports.create(payload);
         Utils.notify('営業報告を保存しました', 'success');
@@ -341,7 +404,10 @@ const SalesReportModal = {
       errorEl.className = 'alert alert-error';
       errorEl.innerHTML = `<i class="fas fa-exclamation-circle"></i><span>${err.message}</span>`;
       saveBtn.disabled = false;
-      saveBtn.innerHTML = `<i class="fas fa-${this.editingReport ? 'plus-circle' : 'save'}"></i> ${this.editingReport ? '追記保存' : '保存'}`;
+      const isOverwrite = this.editMode === 'overwrite';
+      saveBtn.innerHTML = this.editingReport
+        ? `<i class="fas fa-${isOverwrite ? 'pen' : 'plus-circle'}"></i> ${isOverwrite ? '上書き保存' : '追記保存'}`
+        : `<i class="fas fa-save"></i> 保存`;
     }
   }
 };

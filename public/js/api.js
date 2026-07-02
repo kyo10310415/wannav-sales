@@ -53,6 +53,7 @@ const API = {
   get: (path) => API.request('GET', path),
   post: (path, data) => API.request('POST', path, data),
   put: (path, data) => API.request('PUT', path, data),
+  patch: (path, data) => API.request('PATCH', path, data),
   delete: (path) => API.request('DELETE', path),
 
   // Auth
@@ -77,7 +78,8 @@ const API = {
     list: () => API.get('/sales-reports'),
     get: (id) => API.get(`/sales-reports/${id}`),
     create: (data) => API.post('/sales-reports', data),
-    update: (id, data) => API.put(`/sales-reports/${id}`, data),
+    update: (id, data) => API.put(`/sales-reports/${id}`, data),   // 追記（新規レコード追加）
+    overwrite: (id, data) => API.patch(`/sales-reports/${id}`, data), // 上書き（既存レコード更新）
     delete: (id) => API.delete(`/sales-reports/${id}`),
   },
 
@@ -159,7 +161,9 @@ const API = {
         const q = opts?.interviewer_id ? `?interviewer_id=${opts.interviewer_id}` : '';
         return API.get(`/sukuukun/history${q}`);
       },
-      get:   (id) => API.get(`/sukuukun/history/${id}`),
+      get:        (id) => API.get(`/sukuukun/history/${id}`),
+      deleteEval: (id) => API.delete(`/sukuukun/history/${id}`),    // 採点履歴削除
+      deleteSpeech: (id) => API.delete(`/sukuukun/speech/${id}`),   // 発話分析履歴削除
     },
     // 応募者別の採点・発話比率履歴を取得
     byApplicant: (key) => API.get(`/sukuukun/by-applicant/${encodeURIComponent(key)}`),
