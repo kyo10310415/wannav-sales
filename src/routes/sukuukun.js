@@ -20,6 +20,16 @@ const upload = multer({
 // ============================================================
 // Gemini API ヘルパー
 // ============================================================
+
+// gemini-2.5-flash はthinkingモデルのため parts[] に thought:true のpartが混在する場合がある。
+// 実際のテキスト出力（thought でないpart）を確実に取得するヘルパー。
+function extractGeminiText(body) {
+  const parts = body?.candidates?.[0]?.content?.parts || [];
+  // thought:true でないpartのテキストを結合（通常は1件）
+  const textParts = parts.filter(p => !p.thought).map(p => p.text || '');
+  return textParts.join('') || '';
+}
+
 function callGemini(systemPrompt, userMessage, apiKey) {
   return new Promise((resolve, reject) => {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -30,10 +40,12 @@ function callGemini(systemPrompt, userMessage, apiKey) {
       contents: [{ role: 'user', parts: [{ text: userMessage }] }],
       generationConfig: {
         temperature: 0.3,
-        maxOutputTokens: 65536
+        maxOutputTokens: 65536,
         // responseMimeType を指定しない → テキスト出力でJSONを抽出する
         // （application/json 指定だと長文のtemplate_outputが途中で切れる問題が発生）
-      }
+      },
+      // thinkingBudget=0 でthinkingを無効化（高速化・トークン節約）
+      thinkingConfig: { thinkingBudget: 0 }
     };
 
     const bodyStr = JSON.stringify(payload);
@@ -317,7 +329,7 @@ router.post('/evaluate', authenticateToken, async (req, res) => {
       return res.status(502).json({ error: `Gemini APIエラー (${result.status}): ${errMsg}` });
     }
 
-    const rawText = result.body?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const rawText = extractGeminiText(result.body);
 
     let evaluation;
     try {
@@ -405,6 +417,22 @@ router.get('/history/:id', authenticateToken, (req, res) => {
   res.json(row);
 });
 
+// DELETE /api/sukuukun/history/:id — 採点履歴削除
+router.delete('/history/:id', authenticateToken, (req, res) => {
+  const row = db.prepare('SELECT id FROM sukuukun_evaluations WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: '履歴が見つかりません' });
+  db.prepare('DELETE FROM sukuukun_evaluations WHERE id = ?').run(req.params.id);
+  res.json({ message: '削除しました' });
+});
+
+// DELETE /api/sukuukun/speech/:id — 発話分析履歴削除
+router.delete('/speech/:id', authenticateToken, (req, res) => {
+  const row = db.prepare('SELECT id FROM sukuukun_speech_analyses WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: '発話分析が見つかりません' });
+  db.prepare('DELETE FROM sukuukun_speech_analyses WHERE id = ?').run(req.params.id);
+  res.json({ message: '削除しました' });
+});
+
 // ============================================================
 // 発話比率分析
 // POST /api/sukuukun/analyze-speech
@@ -424,9 +452,16 @@ router.post('/analyze-speech', authenticateToken, async (req, res) => {
 
   const metricsText = metrics ? JSON.stringify(metrics, null, 2) : '（メトリクスなし）';
 
-  const systemPrompt = `あなたは営業コーチです。
-面接・セールスの文字起こしと、事前に算出した発話メトリクスを受け取り、
-感情シグナルの推定と改善アドバイスを行ってください。
+  const systemPrompt = `あなたはVtuber営業専門のセールスコーチです。
+面接・セールスの文字起こしと発話メトリクスを受け取り、
+**この会話固有の内容・流れ・発言に基づいた**感情シグナル推定と改善アドバイスを行ってください。
+
+【分析方針 — 重要】
+- 一般論・テンプレート的なアドバイスは禁止。必ず会話の具体的な発言・場面を引用して分析すること。
+- 発話比率が高い/低いという事実だけでなく、「なぜその状況が生まれたか」を会話内容から読み取ること。
+- 感情シグナルは応募者の発言トーン・語彙・沈黙パターンから推定し、根拠となる発言を示すこと。
+- アドバイスは「次回この担当者がとるべき具体的なアクション」として、この会話で見えた課題に直結させること。
+- ティーチングやスクリプト遵守の一般的な言及は避けること。
 
 【出力フォーマット — 厳守】
 必ず以下の JSON 形式のみで返答してください。JSONの前後に説明文・マークダウン・コードブロックを付けないこと。
@@ -438,15 +473,15 @@ router.post('/analyze-speech', authenticateToken, async (req, res) => {
     "positive":   <0〜100の整数: ポジティブ度推定>
   },
   "emotion_notes": {
-    "confusion_reason":  "<困惑の根拠（50文字以内）>",
-    "stress_reason":     "<ストレスの根拠（50文字以内）>",
-    "positive_reason":   "<ポジティブの根拠（50文字以内）>"
+    "confusion_reason":  "<困惑の根拠：会話の具体的な発言・場面を引用（60文字以内）>",
+    "stress_reason":     "<ストレスの根拠：会話の具体的な発言・場面を引用（60文字以内）>",
+    "positive_reason":   "<ポジティブの根拠：会話の具体的な発言・場面を引用（60文字以内）>"
   },
-  "advice": "<200〜500文字の改善アドバイス>",
+  "advice": "<この会話固有の課題・強みを踏まえた具体的な改善アドバイス（200〜500文字）。必ず実際の発言を引用すること>",
   "actions": [
-    "<具体的な改善アクション1（50文字以内）>",
-    "<具体的な改善アクション2（50文字以内）>",
-    "<具体的な改善アクション3（50文字以内）>"
+    "<この会話で見えた課題への具体的なアクション1（次回すぐ実践できるレベルで、50文字以内）>",
+    "<この会話で見えた課題への具体的なアクション2（50文字以内）>",
+    "<この会話で見えた課題への具体的なアクション3（50文字以内）>"
   ]
 }`;
 
@@ -460,7 +495,7 @@ router.post('/analyze-speech', authenticateToken, async (req, res) => {
       return res.status(502).json({ error: `Gemini APIエラー (${result.status}): ${errMsg}` });
     }
 
-    const rawText = result.body?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const rawText = extractGeminiText(result.body);
 
     let parsed;
     try {

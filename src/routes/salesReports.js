@@ -172,6 +172,91 @@ router.put('/:id', authenticateToken, (req, res) => {
   }
 });
 
+// PATCH /api/sales-reports/:id - 営業報告の内容を直接上書き（新規レコードは作らない）
+router.patch('/:id', authenticateToken, (req, res) => {
+  const { id } = req.params;
+  const original = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(id);
+
+  if (!original) {
+    return res.status(404).json({ error: '営業報告が見つかりません' });
+  }
+
+  const {
+    interviewer_id, interviewer_name, applicant_full_name,
+    applicant_last_name, applicant_first_name, applicant_email,
+    student_number, interview_date, interview_content, result,
+    stay_count, no_count, contract_plan,
+    payment_method, notion_url, lesson_start_date,
+    character_rights, join_reasons, decline_reasons, phone_number, details,
+    ep_proposal
+  } = req.body;
+
+  const nameEmailKey = makeNameEmailKey(
+    applicant_full_name || original.applicant_full_name,
+    applicant_email     !== undefined ? applicant_email : original.applicant_email
+  );
+
+  try {
+    db.prepare(`
+      UPDATE sales_reports SET
+        interviewer_id    = ?,
+        interviewer_name  = ?,
+        applicant_full_name  = ?,
+        applicant_last_name  = ?,
+        applicant_first_name = ?,
+        applicant_email      = ?,
+        student_number    = ?,
+        interview_date    = ?,
+        interview_content = ?,
+        result            = ?,
+        stay_count        = ?,
+        no_count          = ?,
+        contract_plan     = ?,
+        payment_method    = ?,
+        notion_url        = ?,
+        lesson_start_date = ?,
+        character_rights  = ?,
+        join_reasons      = ?,
+        decline_reasons   = ?,
+        phone_number      = ?,
+        details           = ?,
+        applicant_name_email = ?,
+        ep_proposal       = ?
+      WHERE id = ?
+    `).run(
+      interviewer_id    ?? original.interviewer_id,
+      interviewer_name  ?? original.interviewer_name,
+      applicant_full_name || original.applicant_full_name,
+      applicant_last_name  ?? original.applicant_last_name,
+      applicant_first_name ?? original.applicant_first_name,
+      applicant_email      !== undefined ? applicant_email : original.applicant_email,
+      student_number    ?? original.student_number,
+      interview_date    !== undefined ? (interview_date || null) : original.interview_date,
+      interview_content ?? original.interview_content,
+      result            ?? original.result,
+      stay_count        ?? original.stay_count ?? 0,
+      no_count          ?? original.no_count ?? 0,
+      contract_plan     ?? original.contract_plan,
+      payment_method    ?? original.payment_method,
+      notion_url        ?? original.notion_url,
+      lesson_start_date !== undefined ? (lesson_start_date || null) : original.lesson_start_date,
+      character_rights  ?? original.character_rights,
+      Array.isArray(join_reasons)    ? join_reasons.join(',')    : (join_reasons    ?? original.join_reasons    ?? ''),
+      Array.isArray(decline_reasons) ? decline_reasons.join(',') : (decline_reasons ?? original.decline_reasons ?? ''),
+      phone_number ?? original.phone_number,
+      details      ?? original.details,
+      nameEmailKey,
+      ep_proposal !== undefined ? (ep_proposal ? 1 : 0) : (original.ep_proposal ?? 0),
+      id
+    );
+
+    const updated = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(id);
+    res.json(updated);
+  } catch (err) {
+    return res.status(500).json({ error: '営業報告の更新に失敗しました: ' + err.message });
+  }
+});
+
 // DELETE /api/sales-reports/:id - 営業報告削除
 router.delete('/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
