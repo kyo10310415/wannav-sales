@@ -43,9 +43,9 @@ function callGemini(systemPrompt, userMessage, apiKey) {
         maxOutputTokens: 65536,
         // responseMimeType を指定しない → テキスト出力でJSONを抽出する
         // （application/json 指定だと長文のtemplate_outputが途中で切れる問題が発生）
-      },
-      // thinkingBudget=0 でthinkingを無効化（高速化・トークン節約）
-      thinkingConfig: { thinkingBudget: 0 }
+        // thinkingBudget=0 でthinkingを無効化（高速化・トークン節約）
+        thinkingConfig: { thinkingBudget: 0 }
+      }
     };
 
     const bodyStr = JSON.stringify(payload);
