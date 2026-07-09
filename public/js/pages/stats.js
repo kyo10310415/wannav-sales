@@ -467,6 +467,7 @@ const StatsPage = {
         value:           this.currentPeriod,
         applicant_count: this.applicantCount,
         ...filterParams,
+        ...this._sheetTypeParam(),
       });
 
       const periodLabel = this.currentType === 'month'
@@ -673,7 +674,10 @@ const StatsPage = {
 
     try {
       const filterParams = this._activeFilterParams();
-      const data = await API.stats.allPeriods(this.currentType, filterParams);
+      const data = await API.stats.allPeriods(this.currentType, {
+        ...filterParams,
+        ...this._sheetTypeParam(),
+      });
       this.allPeriods = data;
       this.renderPeriodsTable(data);
       // allPeriods セット後にファネルカードも再描画（面接実施数を反映）
