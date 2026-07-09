@@ -1,6 +1,8 @@
 // Applicants Page
 const ApplicantsPage = {
-  applicants: [],
+  activeTab: 'as',        // 'as' = アススタ / 'gh' = ゲーハイ
+  applicants: [],         // アススタ
+  ghApplicants: [],       // ゲーハイ
   filteredApplicants: [],
   reports: [],
   interviewDates: {}, // { applicant_key: 'YYYY-MM-DD' }
@@ -63,6 +65,19 @@ const ApplicantsPage = {
             <i class="fas fa-file-csv"></i> CSVダウンロード
           </button>
         </div>
+      </div>
+      <!-- ─── シートタブ ─── -->
+      <div style="display:flex;gap:0;border-bottom:2px solid #e5e7eb;margin-bottom:12px;background:#f9fafb;border-radius:8px 8px 0 0;overflow:hidden">
+        <button id="tab-btn-as"
+          onclick="ApplicantsPage.switchTab('as')"
+          style="flex:1;max-width:200px;padding:10px 20px;border:none;border-bottom:3px solid ${this.activeTab==='as'?'var(--primary)':'transparent'};background:${this.activeTab==='as'?'white':'transparent'};font-size:13px;font-weight:${this.activeTab==='as'?'700':'500'};color:${this.activeTab==='as'?'var(--primary)':'#6b7280'};cursor:pointer;transition:all 0.15s;display:flex;align-items:center;justify-content:center;gap:6px">
+          <i class="fas fa-star" style="font-size:11px"></i> アススタ
+        </button>
+        <button id="tab-btn-gh"
+          onclick="ApplicantsPage.switchTab('gh')"
+          style="flex:1;max-width:200px;padding:10px 20px;border:none;border-bottom:3px solid ${this.activeTab==='gh'?'#7c3aed':'transparent'};background:${this.activeTab==='gh'?'white':'transparent'};font-size:13px;font-weight:${this.activeTab==='gh'?'700':'500'};color:${this.activeTab==='gh'?'#7c3aed':'#6b7280'};cursor:pointer;transition:all 0.15s;display:flex;align-items:center;justify-content:center;gap:6px">
+          <i class="fas fa-gamepad" style="font-size:11px"></i> ゲーハイ
+        </button>
       </div>
       <div class="page-body">
         <div class="card" style="margin-bottom:12px">
@@ -224,16 +239,29 @@ const ApplicantsPage = {
 
     try {
       const params = useCache ? {} : { refresh: '1' };
-      const [sheetData, reportsData, datesData, scData, notionData] = await Promise.all([
+      const [sheetData, sheetDataGh, reportsData, datesData, scData, notionData] = await Promise.all([
         API.spreadsheet.applicants(params),
+        API.spreadsheet.applicantsGh(params),
         API.salesReports.list(),
         API.interviewDates.list(),
         API.surpriseCall.list().catch(() => ({ rows: [] })),
         API.notion.profiles().catch(() => []),
       ]);
-      this.applicants = sheetData.applicants || [];
-      this.visibleHeaders = sheetData.visibleHeaders || [];
-      this.allSheetHeaders = sheetData.headers || [];
+
+      // アススタ
+      this.applicants   = sheetData.applicants || [];
+      this._asVisibleHeaders  = sheetData.visibleHeaders || [];
+      this._asAllSheetHeaders = sheetData.headers || [];
+      this._asCacheInfo = { cached: sheetData.cached, age: sheetData.cache_age_seconds, stale: sheetData.stale };
+      // ゲーハイ
+      this.ghApplicants = sheetDataGh.applicants || [];
+      this._ghVisibleHeaders  = sheetDataGh.visibleHeaders || [];
+      this._ghAllSheetHeaders = sheetDataGh.headers || [];
+      this._ghCacheInfo = { cached: sheetDataGh.cached, age: sheetDataGh.cache_age_seconds, stale: sheetDataGh.stale };
+
+      // アクティブタブのヘッダー・キャッシュ情報を設定
+      this._applyTabData();
+
       this.reports = reportsData || [];
       this.interviewDates = datesData || {};
       // サプライズコール: student_number → 架電記録配列のMap構築
@@ -250,11 +278,6 @@ const ApplicantsPage = {
         const sn = (p.student_number || '').trim();
         if (sn) this.notionProfileMap[sn] = p;
       }
-      this.cacheInfo = {
-        cached: sheetData.cached,
-        age: sheetData.cache_age_seconds,
-        stale: sheetData.stale,
-      };
       this.error = null;
       this.renderCacheBadge();
       this._populateInterviewerSelect();
@@ -282,6 +305,48 @@ const ApplicantsPage = {
           </div>
         </div>`;
     }
+  },
+
+  // アクティブタブに応じて visibleHeaders / allSheetHeaders / cacheInfo を切り替える
+  _applyTabData() {
+    if (this.activeTab === 'gh') {
+      this.visibleHeaders  = this._ghVisibleHeaders  || [];
+      this.allSheetHeaders = this._ghAllSheetHeaders || [];
+      this.cacheInfo       = this._ghCacheInfo       || null;
+    } else {
+      this.visibleHeaders  = this._asVisibleHeaders  || [];
+      this.allSheetHeaders = this._asAllSheetHeaders || [];
+      this.cacheInfo       = this._asCacheInfo       || null;
+    }
+  },
+
+  // ─── タブ切り替え ───────────────────────────────────────────
+  switchTab(tab) {
+    if (this.activeTab === tab) return;
+    this.activeTab = tab;
+    this.currentPage = 1;
+
+    // タブボタンのスタイル更新
+    const asBtn = document.getElementById('tab-btn-as');
+    const ghBtn = document.getElementById('tab-btn-gh');
+    if (asBtn) {
+      asBtn.style.borderBottomColor = tab === 'as' ? 'var(--primary)' : 'transparent';
+      asBtn.style.background        = tab === 'as' ? 'white'          : 'transparent';
+      asBtn.style.fontWeight        = tab === 'as' ? '700'            : '500';
+      asBtn.style.color             = tab === 'as' ? 'var(--primary)' : '#6b7280';
+    }
+    if (ghBtn) {
+      ghBtn.style.borderBottomColor = tab === 'gh' ? '#7c3aed'    : 'transparent';
+      ghBtn.style.background        = tab === 'gh' ? 'white'      : 'transparent';
+      ghBtn.style.fontWeight        = tab === 'gh' ? '700'        : '500';
+      ghBtn.style.color             = tab === 'gh' ? '#7c3aed'    : '#6b7280';
+    }
+
+    // ヘッダー・キャッシュ情報を切り替えて再描画
+    this._applyTabData();
+    this.renderCacheBadge();
+    this._populateInterviewerSelect();
+    this.filterAndRender();
   },
 
   async forceRefresh() {
@@ -489,7 +554,9 @@ const ApplicantsPage = {
   },
 
   filterAndRender() {
-    let list = [...this.applicants];
+    // アクティブタブに応じてデータソースを切り替え
+    const sourceList = this.activeTab === 'gh' ? this.ghApplicants : this.applicants;
+    let list = [...sourceList];
 
     if (this.searchQuery) {
       const q = this.searchQuery;

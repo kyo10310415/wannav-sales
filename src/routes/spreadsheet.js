@@ -5,48 +5,58 @@ const { authenticateToken } = require('../middleware/auth');
 const db = require('../database');
 
 const SPREADSHEET_ID = '1H0CctpkCJ4PVZ5cf1YYI7_elNwUu0uIcHIHMNTHYHW4';
-const SHEET_NAME = 'アススタ';
-const RANGE = `${SHEET_NAME}!A1:AA`;
+const SHEET_NAME    = 'アススタ';
+const RANGE         = `${SHEET_NAME}!A1:AA`;
+
+// ゲーハイ（EP）シート
+const GH_SHEET_NAME = 'ゲーハイ（EP）';
+const GH_RANGE      = `${GH_SHEET_NAME}!A1:AA`;
 
 // ============================================================
 // メモリキャッシュ（TTL: 5分）
 // ============================================================
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1時間
 
-const cache = {
-  data: null,         // 処理済みデータ
-  rawRows: null,      // 生のrows（count用）
-  rawHeaders: null,
-  fetchedAt: null,    // 最終取得時刻
-  fetching: false,    // 取得中フラグ（重複リクエスト防止）
-  fetchPromise: null, // 進行中のfetchをまとめる
+function makeCache(label) {
+  return {
+    data: null,
+    rawRows: null,
+    rawHeaders: null,
+    fetchedAt: null,
+    fetching: false,
+    fetchPromise: null,
+    _label: label,
 
-  isValid() {
-    return this.data && this.fetchedAt && (Date.now() - this.fetchedAt < CACHE_TTL_MS);
-  },
+    isValid() {
+      return this.data && this.fetchedAt && (Date.now() - this.fetchedAt < CACHE_TTL_MS);
+    },
 
-  set(data, rawRows, rawHeaders) {
-    this.data = data;
-    this.rawRows = rawRows;
-    this.rawHeaders = rawHeaders;
-    this.fetchedAt = Date.now();
-    this.fetching = false;
-    this.fetchPromise = null;
-    console.log(`[Cache] Updated: ${data.applicants.length} applicants at ${new Date().toISOString()}`);
-  },
+    set(data, rawRows, rawHeaders) {
+      this.data = data;
+      this.rawRows = rawRows;
+      this.rawHeaders = rawHeaders;
+      this.fetchedAt = Date.now();
+      this.fetching = false;
+      this.fetchPromise = null;
+      console.log(`[Cache:${this._label}] Updated: ${data.applicants.length} applicants at ${new Date().toISOString()}`);
+    },
 
-  clear() {
-    this.data = null;
-    this.rawRows = null;
-    this.rawHeaders = null;
-    this.fetchedAt = null;
-  },
+    clear() {
+      this.data = null;
+      this.rawRows = null;
+      this.rawHeaders = null;
+      this.fetchedAt = null;
+    },
 
-  ageSeconds() {
-    if (!this.fetchedAt) return null;
-    return Math.floor((Date.now() - this.fetchedAt) / 1000);
-  }
-};
+    ageSeconds() {
+      if (!this.fetchedAt) return null;
+      return Math.floor((Date.now() - this.fetchedAt) / 1000);
+    }
+  };
+}
+
+const cache   = makeCache('アススタ');
+const cacheGh = makeCache('ゲーハイ');
 
 // ============================================================
 // 非表示列（ヘッダー名完全一致）
@@ -140,11 +150,12 @@ function isInPeriod(dateStr, period, value) {
 // ============================================================
 // スプレッドシート取得・加工（共通処理）
 // ============================================================
-async function fetchAndProcessSheet() {
+async function fetchAndProcessSheet(sheetRange) {
+  const range = sheetRange || RANGE;
   const sheets = await getGoogleSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: RANGE,
+    range,
   });
 
   const rows = response.data.values;
@@ -261,55 +272,62 @@ async function fetchAndProcessSheet() {
 // ============================================================
 // キャッシュ付きデータ取得（重複リクエストをまとめる）
 // ============================================================
-async function getCachedData(forceRefresh = false) {
-  if (!forceRefresh && cache.isValid()) {
-    return cache.data;
+async function getCachedData(forceRefresh = false, targetCache = cache, sheetRange = RANGE) {
+  if (!forceRefresh && targetCache.isValid()) {
+    return targetCache.data;
   }
 
   // 既に取得中なら同じPromiseを返す（リクエスト合流）
-  if (cache.fetching && cache.fetchPromise) {
-    return cache.fetchPromise;
+  if (targetCache.fetching && targetCache.fetchPromise) {
+    return targetCache.fetchPromise;
   }
 
-  cache.fetching = true;
-  cache.fetchPromise = fetchAndProcessSheet().then(({ result, rawRows, rawHeaders }) => {
-    cache.set(result, rawRows, rawHeaders);
+  targetCache.fetching = true;
+  targetCache.fetchPromise = fetchAndProcessSheet(sheetRange).then(({ result, rawRows, rawHeaders }) => {
+    targetCache.set(result, rawRows, rawHeaders);
     return result;
   }).catch(err => {
-    cache.fetching = false;
-    cache.fetchPromise = null;
+    targetCache.fetching = false;
+    targetCache.fetchPromise = null;
     throw err;
   });
 
-  return cache.fetchPromise;
+  return targetCache.fetchPromise;
 }
 
 // サーバー起動直後にバックグラウンドで1回取得しておく（ウォームアップ）
 setTimeout(() => {
-  getCachedData().catch(err => {
-    // 認証情報が未設定の場合は無視
+  getCachedData(false, cache, RANGE).catch(err => {
     if (!err.message.includes('認証情報')) {
-      console.warn('[Cache warmup] Failed:', err.message);
+      console.warn('[Cache warmup] アススタ Failed:', err.message);
+    }
+  });
+  getCachedData(false, cacheGh, GH_RANGE).catch(err => {
+    if (!err.message.includes('認証情報')) {
+      console.warn('[Cache warmup] ゲーハイ Failed:', err.message);
     }
   });
 }, 3000);
 
-// 5分おきにバックグラウンド更新
+// 1時間おきにバックグラウンド更新
 setInterval(() => {
-  getCachedData(true).catch(err => {
-    console.warn('[Cache refresh] Failed:', err.message);
+  getCachedData(true, cache, RANGE).catch(err => {
+    console.warn('[Cache refresh] アススタ Failed:', err.message);
+  });
+  getCachedData(true, cacheGh, GH_RANGE).catch(err => {
+    console.warn('[Cache refresh] ゲーハイ Failed:', err.message);
   });
 }, CACHE_TTL_MS);
 
 // ============================================================
-// GET /api/spreadsheet/applicants
+// GET /api/spreadsheet/applicants  （アススタシート）
 // ============================================================
 router.get('/applicants', authenticateToken, async (req, res) => {
   const { period, value, refresh } = req.query;
   const forceRefresh = refresh === '1';
 
   try {
-    const data = await getCachedData(forceRefresh);
+    const data = await getCachedData(forceRefresh, cache, RANGE);
 
     // 期間フィルタが指定された場合のカウント
     let periodCount = null;
@@ -351,13 +369,59 @@ router.get('/applicants', authenticateToken, async (req, res) => {
 });
 
 // ============================================================
+// GET /api/spreadsheet/applicants/gh  （ゲーハイシート）
+// ============================================================
+router.get('/applicants/gh', authenticateToken, async (req, res) => {
+  const { period, value, refresh } = req.query;
+  const forceRefresh = refresh === '1';
+
+  try {
+    const data = await getCachedData(forceRefresh, cacheGh, GH_RANGE);
+
+    let periodCount = null;
+    if (period && value) {
+      periodCount = data.applicants.filter(a => isInPeriod(a.date_str, period, value)).length;
+    }
+
+    const cvCount = data.applicants.filter(a => a.is_cv).length;
+
+    res.json({
+      ...data,
+      total: data.applicants.length,
+      period_count: periodCount,
+      cv_count: cvCount,
+      cached: cacheGh.isValid(),
+      cache_age_seconds: cacheGh.ageSeconds(),
+    });
+  } catch (err) {
+    console.error('Spreadsheet GH error:', err);
+
+    if (cacheGh.data) {
+      console.warn('[Cache GH] Returning stale cache due to error');
+      return res.json({
+        ...cacheGh.data,
+        total: cacheGh.data.applicants.length,
+        cached: true,
+        cache_age_seconds: cacheGh.ageSeconds(),
+        stale: true,
+        error_message: err.message,
+      });
+    }
+
+    res.status(500).json({
+      error: 'スプレッドシート（ゲーハイ）の取得に失敗しました: ' + err.message,
+    });
+  }
+});
+
+// ============================================================
 // GET /api/spreadsheet/applicants/count - 期間別応募数（キャッシュ活用）
 // ============================================================
 router.get('/applicants/count', authenticateToken, async (req, res) => {
   const { period, value } = req.query;
 
   try {
-    const data = await getCachedData();
+    const data = await getCachedData(false, cache, RANGE);
 
     const filtered = (period && value)
       ? data.applicants.filter(a => isInPeriod(a.date_str, period, value))
@@ -413,6 +477,9 @@ router.get('/cache-status', authenticateToken, (req, res) => {
     cache_age_seconds: cache.ageSeconds(),
     ttl_seconds: CACHE_TTL_MS / 1000,
     total_applicants: cache.data?.applicants?.length ?? null,
+    gh_cached: cacheGh.isValid(),
+    gh_fetched_at: cacheGh.fetchedAt ? new Date(cacheGh.fetchedAt).toISOString() : null,
+    gh_total_applicants: cacheGh.data?.applicants?.length ?? null,
   });
 });
 
@@ -421,8 +488,12 @@ router.get('/cache-status', authenticateToken, (req, res) => {
 // ============================================================
 router.post('/cache-clear', authenticateToken, async (req, res) => {
   cache.clear();
+  cacheGh.clear();
   try {
-    const data = await getCachedData(true);
+    const [data] = await Promise.all([
+      getCachedData(true, cache, RANGE),
+      getCachedData(true, cacheGh, GH_RANGE),
+    ]);
     res.json({
       message: 'キャッシュを更新しました',
       total: data.applicants.length,
@@ -434,4 +505,5 @@ router.post('/cache-clear', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
-module.exports.cache = cache;
+module.exports.cache   = cache;
+module.exports.cacheGh = cacheGh;
