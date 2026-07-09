@@ -295,28 +295,32 @@ async function getCachedData(forceRefresh = false, targetCache = cache, sheetRan
   return targetCache.fetchPromise;
 }
 
-// サーバー起動直後にバックグラウンドで1回取得しておく（ウォームアップ）
+// サーバー起動直後にバックグラウンドで順次取得しておく（ウォームアップ）
+// ※ 同時リクエストだと Google Sheets API のレート制限（503）に引っかかるため
+//   アススタ取得後に 2 秒待ってからゲーハイを取得する
 setTimeout(() => {
-  getCachedData(false, cache, RANGE).catch(err => {
-    if (!err.message.includes('認証情報')) {
-      console.warn('[Cache warmup] アススタ Failed:', err.message);
-    }
-  });
-  getCachedData(false, cacheGh, GH_RANGE).catch(err => {
-    if (!err.message.includes('認証情報')) {
-      console.warn('[Cache warmup] ゲーハイ Failed:', err.message);
-    }
-  });
+  getCachedData(false, cache, RANGE)
+    .catch(err => {
+      if (!err.message.includes('認証情報')) {
+        console.warn('[Cache warmup] アススタ Failed:', err.message);
+      }
+    })
+    .then(() => new Promise(r => setTimeout(r, 2000)))
+    .then(() => getCachedData(false, cacheGh, GH_RANGE))
+    .catch(err => {
+      if (!err.message.includes('認証情報')) {
+        console.warn('[Cache warmup] ゲーハイ Failed:', err.message);
+      }
+    });
 }, 3000);
 
-// 1時間おきにバックグラウンド更新
+// 1時間おきにバックグラウンド更新（順次・2秒間隔）
 setInterval(() => {
-  getCachedData(true, cache, RANGE).catch(err => {
-    console.warn('[Cache refresh] アススタ Failed:', err.message);
-  });
-  getCachedData(true, cacheGh, GH_RANGE).catch(err => {
-    console.warn('[Cache refresh] ゲーハイ Failed:', err.message);
-  });
+  getCachedData(true, cache, RANGE)
+    .catch(err => { console.warn('[Cache refresh] アススタ Failed:', err.message); })
+    .then(() => new Promise(r => setTimeout(r, 2000)))
+    .then(() => getCachedData(true, cacheGh, GH_RANGE))
+    .catch(err => { console.warn('[Cache refresh] ゲーハイ Failed:', err.message); });
 }, CACHE_TTL_MS);
 
 // ============================================================
