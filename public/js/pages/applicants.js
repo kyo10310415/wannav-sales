@@ -239,9 +239,10 @@ const ApplicantsPage = {
 
     try {
       const params = useCache ? {} : { refresh: '1' };
+      // ゲーハイは取得失敗してもアススタ側を壊さないよう .catch() で隔離
       const [sheetData, sheetDataGh, reportsData, datesData, scData, notionData] = await Promise.all([
         API.spreadsheet.applicants(params),
-        API.spreadsheet.applicantsGh(params),
+        API.spreadsheet.applicantsGh(params).catch(e => ({ _error: e.message, applicants: [], visibleHeaders: [], headers: [] })),
         API.salesReports.list(),
         API.interviewDates.list(),
         API.surpriseCall.list().catch(() => ({ rows: [] })),
@@ -257,7 +258,12 @@ const ApplicantsPage = {
       this.ghApplicants = sheetDataGh.applicants || [];
       this._ghVisibleHeaders  = sheetDataGh.visibleHeaders || [];
       this._ghAllSheetHeaders = sheetDataGh.headers || [];
-      this._ghCacheInfo = { cached: sheetDataGh.cached, age: sheetDataGh.cache_age_seconds, stale: sheetDataGh.stale };
+      this._ghCacheInfo = {
+        cached: sheetDataGh.cached,
+        age: sheetDataGh.cache_age_seconds,
+        stale: sheetDataGh.stale,
+        error: sheetDataGh._error || null,   // 取得失敗時のエラーメッセージ
+      };
 
       // アクティブタブのヘッダー・キャッシュ情報を設定
       this._applyTabData();
@@ -317,6 +323,28 @@ const ApplicantsPage = {
       this.visibleHeaders  = this._asVisibleHeaders  || [];
       this.allSheetHeaders = this._asAllSheetHeaders || [];
       this.cacheInfo       = this._asCacheInfo       || null;
+    }
+  },
+
+  // ─── ゲーハイ単独再取得 ────────────────────────────────────
+  async retryGh() {
+    const wrap = document.getElementById('applicants-table-wrap');
+    if (wrap) wrap.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><span>ゲーハイシートを再取得中...</span></div>`;
+    try {
+      const sheetDataGh = await API.spreadsheet.applicantsGh({ refresh: '1' });
+      this.ghApplicants           = sheetDataGh.applicants || [];
+      this._ghVisibleHeaders      = sheetDataGh.visibleHeaders || [];
+      this._ghAllSheetHeaders     = sheetDataGh.headers || [];
+      this._ghCacheInfo           = { cached: sheetDataGh.cached, age: sheetDataGh.cache_age_seconds, stale: sheetDataGh.stale, error: null };
+      this._applyTabData();
+      this.renderCacheBadge();
+      this._populateInterviewerSelect();
+      this.filterAndRender();
+      Utils.notify('ゲーハイシートを再取得しました', 'success');
+    } catch (e) {
+      this._ghCacheInfo = { ...(this._ghCacheInfo || {}), error: e.message };
+      this.filterAndRender();
+      Utils.notify('再取得に失敗しました: ' + e.message, 'error');
     }
   },
 
@@ -719,6 +747,26 @@ const ApplicantsPage = {
   renderTable() {
     const wrap = document.getElementById('applicants-table-wrap');
     if (!wrap || this.error) return;
+
+    // ゲーハイタブ選択中に取得失敗していた場合はエラー表示
+    if (this.activeTab === 'gh' && this._ghCacheInfo?.error) {
+      wrap.innerHTML = `
+        <div style="padding:24px">
+          <div class="alert alert-error">
+            <i class="fas fa-exclamation-triangle"></i>
+            <div>
+              <strong>ゲーハイシートの読み込みに失敗しました</strong><br>
+              <span style="font-size:12px">${Utils.escHtml(this._ghCacheInfo.error)}</span>
+            </div>
+          </div>
+          <div style="text-align:center;padding:8px">
+            <button class="btn btn-primary btn-sm" onclick="ApplicantsPage.retryGh()">
+              <i class="fas fa-redo"></i> 再取得
+            </button>
+          </div>
+        </div>`;
+      return;
+    }
 
     const { items } = Utils.paginate(this.filteredApplicants, this.currentPage, this.perPage);
 
