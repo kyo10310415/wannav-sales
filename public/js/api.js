@@ -89,6 +89,10 @@ const API = {
       const q = params ? '?' + new URLSearchParams(params).toString() : '';
       return API.get(`/spreadsheet/applicants${q}`);
     },
+    applicantsGh: (params) => {
+      const q = params ? '?' + new URLSearchParams(params).toString() : '';
+      return API.get(`/spreadsheet/applicants/gh${q}`);
+    },
     applicantsCount: (params) => {
       const q = params ? '?' + new URLSearchParams(params).toString() : '';
       return API.get(`/spreadsheet/applicants/count${q}`);
