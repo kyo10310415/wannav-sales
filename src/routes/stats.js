@@ -136,12 +136,22 @@ function needsNotionJoin(query) {
 }
 
 // ============================================================
+// sheet_type フィルター用ヘルパー
+//   sheet_type: 'as' | 'gh' | 'all'（デフォルト 'all'）
+// ============================================================
+function buildSheetTypeCondition(sheetType) {
+  if (sheetType === 'as')  return `sr.sheet_type = 'as'`;
+  if (sheetType === 'gh')  return `sr.sheet_type = 'gh'`;
+  return null; // 'all' または未指定は条件なし
+}
+
+// ============================================================
 // 共通: sales_reports + notion_profiles JOIN付きベースSQL生成
 //   periodFilter : 'WHERE sr.xxx = ?' 相当の文字列（'WHERE'付き）
 //   filterConds  : buildFilterSQL()の conditions 配列
 //   withJoin     : Notion JOINが必要か
 // ============================================================
-function buildBaseSQL(periodFilter, filterConds, withJoin) {
+function buildBaseSQL(periodFilter, filterConds, withJoin, sheetType) {
   const joinClause = withJoin
     ? `LEFT JOIN notion_profiles np ON np.student_number = sr.student_number`
     : '';
@@ -162,6 +172,9 @@ function buildBaseSQL(periodFilter, filterConds, withJoin) {
   const allConds = [];
   if (periodFilter) allConds.push(periodFilter.replace(/^WHERE\s+/i, ''));
   allConds.push(...filterConds);
+  // sheet_type フィルター
+  const stCond = buildSheetTypeCondition(sheetType);
+  if (stCond) allConds.push(stCond);
 
   const whereClause = allConds.length
     ? `WHERE ${allConds.join(' AND ')}`
@@ -215,7 +228,7 @@ router.get('/filter-options', authenticateToken, (req, res) => {
 router.get('/weekly', authenticateToken, (req, res) => {
   const { conditions, params } = buildFilterSQL(req.query);
   const withJoin = needsNotionJoin(req.query);
-  const baseSQL  = buildBaseSQL('', conditions, withJoin);
+  const baseSQL  = buildBaseSQL('', conditions, withJoin, req.query.sheet_type);
 
   const weekFmt = isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))`);
 
@@ -248,7 +261,7 @@ router.get('/weekly', authenticateToken, (req, res) => {
 router.get('/monthly', authenticateToken, (req, res) => {
   const { conditions, params } = buildFilterSQL(req.query);
   const withJoin = needsNotionJoin(req.query);
-  const baseSQL  = buildBaseSQL('', conditions, withJoin);
+  const baseSQL  = buildBaseSQL('', conditions, withJoin, req.query.sheet_type);
 
   const data = db.prepare(`
     SELECT
@@ -287,7 +300,7 @@ router.get('/monthly', authenticateToken, (req, res) => {
 //   CV        = 営業報告の契約結果のみカウント（スプレッドシートのCV列は不使用）
 // ============================================================
 router.get('/summary', authenticateToken, (req, res) => {
-  const { period, value, applicant_count } = req.query;
+  const { period, value, applicant_count, sheet_type } = req.query;
 
   // 期間フィルター
   let periodCond = '';
@@ -308,6 +321,10 @@ router.get('/summary', authenticateToken, (req, res) => {
   const allConds = [];
   if (periodCond)        allConds.push(periodCond);
   allConds.push(...filterConds);
+
+  // sheet_type フィルター
+  const stCond = buildSheetTypeCondition(sheet_type);
+  if (stCond) allConds.push(stCond);
 
   // 全件集計サブクエリ（追記報告も含む全行を対象）
   const dedup = `(
@@ -404,7 +421,7 @@ router.get('/all-periods', authenticateToken, (req, res) => {
   const { type } = req.query;
   const { conditions, params } = buildFilterSQL(req.query);
   const withJoin = needsNotionJoin(req.query);
-  const baseSQL  = buildBaseSQL('', conditions, withJoin);
+  const baseSQL  = buildBaseSQL('', conditions, withJoin, req.query.sheet_type);
 
   const fmt   = type === 'week'
     ? isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))`)
@@ -455,6 +472,10 @@ router.get('/interview-date-cvr', authenticateToken, (req, res) => {
       ? isoWeekPeriod(`aid.interview_date`)
       : `strftime('%Y-%m', aid.interview_date)`;
 
+    // sheet_type フィルター条件
+    const stCond = buildSheetTypeCondition(req.query.sheet_type);
+    const srWhereClause = stCond ? `AND ${stCond.replace(/\bsr\b/g, 'sr2')}` : '';
+
     // applicant_key = COALESCE(NULLIF(applicant_email,''), applicant_full_name)
     //   ※ sales_reports のカラム名は applicant_email / applicant_full_name（email/full_name ではない）
     const data = db.prepare(`
@@ -470,6 +491,7 @@ router.get('/interview-date-cvr', authenticateToken, (req, res) => {
       FROM applicant_interview_dates aid
       LEFT JOIN sales_reports sr2
         ON COALESCE(NULLIF(sr2.applicant_email,''), sr2.applicant_full_name) = aid.applicant_key
+        ${srWhereClause}
       WHERE aid.interview_date IS NOT NULL
         AND aid.interview_date != ''
       GROUP BY period

@@ -2,6 +2,7 @@
 const StatsPage = {
   currentType:   'month', // 'week' or 'month'
   currentPeriod: '',
+  statsTab:       'as',    // 'as' | 'gh' | 'all' ← シート区分タブ
   // スプレッドシートから取得するファネル数値（表示用のみ）
   applicantCount:      0,
   docPassCount:        0,
@@ -36,6 +37,32 @@ const StatsPage = {
         </div>
       </div>
       <div class="page-body">
+
+        <!-- シート区分タブ（アススタ / ゲーハイ / 全体） -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-body" style="padding:12px 20px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <span style="font-size:12px;font-weight:600;color:var(--gray-500)">集計対象</span>
+              <div style="display:flex;gap:0;border-radius:8px;overflow:hidden;border:1.5px solid var(--gray-200)">
+                <button id="stats-tab-as" onclick="StatsPage.switchStatsTab('as')"
+                  style="padding:6px 18px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:#3b82f6;color:white;transition:all .15s">
+                  <i class="fas fa-star" style="margin-right:5px;font-size:11px"></i>アススタ
+                </button>
+                <button id="stats-tab-gh" onclick="StatsPage.switchStatsTab('gh')"
+                  style="padding:6px 18px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--gray-100);color:var(--gray-500);transition:all .15s">
+                  <i class="fas fa-gamepad" style="margin-right:5px;font-size:11px"></i>ゲーハイ
+                </button>
+                <button id="stats-tab-all" onclick="StatsPage.switchStatsTab('all')"
+                  style="padding:6px 18px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--gray-100);color:var(--gray-500);transition:all .15s">
+                  <i class="fas fa-layer-group" style="margin-right:5px;font-size:11px"></i>全体
+                </button>
+              </div>
+              <div id="stats-tab-label" style="font-size:11px;color:var(--gray-400)">
+                アススタシートの集計を表示中
+              </div>
+            </div>
+          </div>
+        </div>
 
         <!-- 期間セレクター -->
         <div class="card" style="margin-bottom:16px">
@@ -168,6 +195,8 @@ const StatsPage = {
   async mount() {
     const select = document.getElementById('period-select');
     if (select) this.currentPeriod = select.value;
+    // シート区分タブのスタイルを初期化
+    this._applyStatsTabStyle();
     // フィルター選択肢を非同期取得・描画
     this._loadFilterOptions();
     // fetchApplicantCount・loadCurrentPeriod・loadAllPeriods を並列実行してロード時間を短縮
@@ -176,6 +205,60 @@ const StatsPage = {
       this.loadCurrentPeriod(),
       this.loadAllPeriods(),
     ]);
+  },
+
+  // ============================================================
+  // シート区分タブ切り替え
+  // ============================================================
+  switchStatsTab(tab) {
+    if (this.statsTab === tab) return;
+    this.statsTab = tab;
+    this._applyStatsTabStyle();
+    // 面接実施日タブのキャッシュをリセット（タブ変更で再取得が必要）
+    this._interviewDateCvrLoaded = false;
+    // 現在のビュータブが interview-date なら即ロード
+    const idView = document.getElementById('view-interview-date');
+    if (idView && idView.style.display !== 'none') {
+      this._interviewDateCvrLoaded = true;
+      this.loadInterviewDateCvr();
+    }
+    // 全集計再実行
+    Promise.all([
+      this.fetchApplicantCount(),
+      this.loadCurrentPeriod(),
+      this.loadAllPeriods(),
+    ]);
+  },
+
+  _applyStatsTabStyle() {
+    const tabs = {
+      as:  'アススタシートの集計を表示中',
+      gh:  'ゲーハイ（EP）シートの集計を表示中',
+      all: '全シート合算の集計を表示中'
+    };
+    const colors = { as: '#3b82f6', gh: '#7c3aed', all: '#0f766e' };
+    ['as', 'gh', 'all'].forEach(t => {
+      const btn = document.getElementById(`stats-tab-${t}`);
+      if (!btn) return;
+      const isActive = t === this.statsTab;
+      btn.style.background = isActive ? colors[t] : 'var(--gray-100)';
+      btn.style.color      = isActive ? 'white'  : 'var(--gray-500)';
+    });
+    const lbl = document.getElementById('stats-tab-label');
+    if (lbl) lbl.textContent = tabs[this.statsTab] || '';
+  },
+
+  // sheet_type パラメータを返すヘルパー（stats API 用）
+  _sheetTypeParam() {
+    if (this.statsTab === 'all') return {};              // 'all' = フィルターなし
+    return { sheet_type: this.statsTab };               // 'as' or 'gh'
+  },
+
+  // スプレッドシートカウント API 用（sheet パラメータ）
+  _sheetParam() {
+    if (this.statsTab === 'all') return { sheet: 'all' };
+    if (this.statsTab === 'gh')  return { sheet: 'gh'  };
+    return { sheet: 'as' };
   },
 
   // ============================================================
@@ -304,6 +387,7 @@ const StatsPage = {
       const data = await API.spreadsheet.applicantsCount({
         period: this.currentType,
         value:  this.currentPeriod,
+        ...this._sheetParam(),
       });
       this.applicantCount     = data.count                || 0;
       this.docPassCount       = data.doc_pass_count       || 0;
@@ -513,6 +597,9 @@ const StatsPage = {
             <i class="fas fa-calendar-alt" style="margin-right:6px"></i>${Utils.escHtml(periodLabel)} のデータ集計
           </div>
           ${filterNote ? `<div style="font-size:11px;color:var(--primary);background:#eff6ff;border-radius:6px;padding:2px 10px">${filterNote}</div>` : ''}
+          <div style="font-size:11px;color:white;padding:2px 10px;border-radius:6px;font-weight:600;background:${{ as:'#3b82f6', gh:'#7c3aed', all:'#0f766e' }[this.statsTab]}">
+            ${{ as:'アススタ', gh:'ゲーハイ', all:'全体' }[this.statsTab]}
+          </div>
         </div>
         <div style="font-size:12px;color:var(--gray-500)">応募〜面接予約: スプレッドシート　面接実施: 営業報告（飛び除外）</div>
       </div>
@@ -628,7 +715,11 @@ const StatsPage = {
               interview_resv_count: this.interviewResvCount,
             });
           }
-          return API.spreadsheet.applicantsCount({ period: this.currentType, value: p.value })
+          return API.spreadsheet.applicantsCount({
+            period: this.currentType,
+            value: p.value,
+            ...this._sheetParam(),
+          })
             // APIレスポンスの period/value フィールドで p.value が上書きされないよう明示的に展開
             .then(d => ({
               period:               p.value,
@@ -901,8 +992,8 @@ const StatsPage = {
 
     try {
       const [monthData, weekData] = await Promise.all([
-        API.stats.interviewDateCvr('month').catch(() => []),
-        API.stats.interviewDateCvr('week').catch(() => []),
+        API.stats.interviewDateCvr('month', this._sheetTypeParam()).catch(() => []),
+        API.stats.interviewDateCvr('week',  this._sheetTypeParam()).catch(() => []),
       ]);
       this._renderInterviewDateCvr(wrap, monthData, weekData);
     } catch (err) {

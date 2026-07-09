@@ -420,24 +420,43 @@ router.get('/applicants/gh', authenticateToken, async (req, res) => {
 
 // ============================================================
 // GET /api/spreadsheet/applicants/count - 期間別応募数（キャッシュ活用）
+//   クエリパラメータ: period, value, sheet = 'as' | 'gh' | 'all'（デフォルト: 'as'）
 // ============================================================
 router.get('/applicants/count', authenticateToken, async (req, res) => {
-  const { period, value } = req.query;
+  const { period, value, sheet } = req.query;
+
+  // sheet パラメータ: 'gh' → ゲーハイ, 'all' → 両シート合算, それ以外 → アススタ
+  const targetSheet = sheet === 'gh' ? 'gh' : (sheet === 'all' ? 'all' : 'as');
 
   try {
-    const data = await getCachedData(false, cache, RANGE);
+    // 対象シートのデータを取得
+    let asData = null, ghData = null;
 
-    const filtered = (period && value)
-      ? data.applicants.filter(a => isInPeriod(a.date_str, period, value))
-      : data.applicants;
+    if (targetSheet === 'as' || targetSheet === 'all') {
+      asData = await getCachedData(false, cache, RANGE);
+    }
+    if (targetSheet === 'gh' || targetSheet === 'all') {
+      ghData = await getCachedData(false, cacheGh, GH_RANGE).catch(() => null);
+    }
+
+    // アススタ集計
+    const asFiltered = asData
+      ? ((period && value) ? asData.applicants.filter(a => isInPeriod(a.date_str, period, value)) : asData.applicants)
+      : [];
+    // ゲーハイ集計
+    const ghFiltered = ghData
+      ? ((period && value) ? ghData.applicants.filter(a => isInPeriod(a.date_str, period, value)) : ghData.applicants)
+      : [];
+
+    // 合算または個別
+    const filtered = targetSheet === 'all'
+      ? [...asFiltered, ...ghFiltered]
+      : (targetSheet === 'gh' ? ghFiltered : asFiltered);
 
     const count = filtered.length;
-
-    // 書類通過: 書類通過列 = TRUE
     const docPassCount = filtered.filter(a => a.is_doc_pass).length;
 
     // 面接予約数: applicant_interview_dates テーブルに面接日が入力されているレコード数
-    // applicant_key = email 優先、なければ full_name
     const interviewDateMap = (() => {
       const rows = db.prepare(
         `SELECT applicant_key FROM applicant_interview_dates
@@ -452,19 +471,18 @@ router.get('/applicants/count', authenticateToken, async (req, res) => {
       return key && interviewDateMap.has(key);
     }).length;
 
-    // interviewCount は廃止（面接実施数 = 営業報告件数で代替するため返さない）
     const cvCount = filtered.filter(a => a.is_cv).length;
 
     res.json({
       count,
       doc_pass_count:       docPassCount,
       interview_resv_count: interviewResvCount,
-      // interview_count は営業報告側（stats API）で管理するため省略
       cv_count: cvCount,
       period,
       value,
-      cached: cache.isValid(),
-      cache_age_seconds: cache.ageSeconds(),
+      sheet: targetSheet,
+      cached: (targetSheet === 'gh' ? cacheGh : cache).isValid(),
+      cache_age_seconds: (targetSheet === 'gh' ? cacheGh : cache).ageSeconds(),
     });
   } catch (err) {
     res.status(500).json({ error: err.message, count: 0, cv_count: 0 });

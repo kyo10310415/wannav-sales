@@ -220,6 +220,14 @@ function initializeDatabase() {
     console.log('Migration: sales_reports.ep_proposal column added');
   }
 
+  // Migration: sales_reports に sheet_type カラムを追加
+  //   'as' = アススタシート（デフォルト）
+  //   'gh' = ゲーハイ（EP）シート
+  if (!srCols.includes('sheet_type')) {
+    db.exec("ALTER TABLE sales_reports ADD COLUMN sheet_type TEXT NOT NULL DEFAULT 'as'");
+    console.log('Migration: sales_reports.sheet_type column added');
+  }
+
   // Migration: idx_sr_name_email UNIQUE INDEX を削除（複数報告を許可するため）
   //   既に存在する場合のみ DROP（存在しなければスキップ）
   try {
