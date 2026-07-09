@@ -881,7 +881,9 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
       const interviewerName = interviewerId
         ? (interviewerSel.options[interviewerSel.selectedIndex]?.dataset?.name || '')
         : '';
-      const applicantName   = document.getElementById('eval-applicant')?.value.trim() || '';
+      const applicantName   = document.getElementById('eval-applicant-name')?.value.trim() || '';
+      // applicantKey: 名前をそのままキーとして使用（フルネームで代替）
+      const applicantKey    = applicantName || undefined;
       const analyzedAt      = new Date().toISOString();
 
       // ③ バックエンドへ（感情シグナル＋アドバイス生成 + DB保存）
@@ -891,6 +893,7 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
         interviewer_id:   interviewerId   || undefined,
         interviewer_name: interviewerName || undefined,
         applicant_name:   applicantName   || undefined,
+        applicant_key:    applicantKey,
         analyzed_at:      analyzedAt,
       });
 
@@ -1109,9 +1112,12 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
     }
 
     try {
+      // applicantKey: 名前をそのままキーとして使用（email がないのでフルネームで代替）
+      const applicantKey = applicantName || undefined;
       const data = await API.sukuukun.evaluate({
         transcript,
         applicantName:   applicantName   || undefined,
+        applicantKey:    applicantKey,
         interviewerId:   interviewerId   || undefined,
         interviewerName: interviewerName || undefined,
         interviewResult: interviewResult || undefined,
