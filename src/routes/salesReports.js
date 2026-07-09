@@ -72,8 +72,8 @@ router.post('/', authenticateToken, (req, res) => {
         stay_count, no_count, contract_plan,
         payment_method, notion_url, lesson_start_date,
         character_rights, join_reasons, decline_reasons, phone_number, details,
-        applicant_name_email, ep_proposal
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        applicant_name_email, ep_proposal, sheet_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result_db = stmt.run(
@@ -87,7 +87,8 @@ router.post('/', authenticateToken, (req, res) => {
       Array.isArray(decline_reasons) ? decline_reasons.join(',') : (decline_reasons || ''),
       phone_number, details,
       nameEmailKey,
-      ep_proposal ? 1 : 0
+      ep_proposal ? 1 : 0,
+      req.body.sheet_type === 'gh' ? 'gh' : 'as'
     );
 
     const report = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(result_db.lastInsertRowid);
@@ -113,7 +114,7 @@ router.put('/:id', authenticateToken, (req, res) => {
     stay_count, no_count, contract_plan,
     payment_method, notion_url, lesson_start_date,
     character_rights, join_reasons, decline_reasons, phone_number, details,
-    ep_proposal
+    ep_proposal, sheet_type
   } = req.body;
 
   // 複合キーを生成（新しい氏名・メールで再生成）
@@ -134,8 +135,8 @@ router.put('/:id', authenticateToken, (req, res) => {
         stay_count, no_count, contract_plan,
         payment_method, notion_url, lesson_start_date,
         character_rights, join_reasons, decline_reasons, phone_number, details,
-        applicant_name_email, parent_id, ep_proposal
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        applicant_name_email, parent_id, ep_proposal, sheet_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result_db = stmt.run(
@@ -162,7 +163,8 @@ router.put('/:id', authenticateToken, (req, res) => {
       details      ?? original.details,
       nameEmailKey,
       rootId,
-      ep_proposal !== undefined ? (ep_proposal ? 1 : 0) : (original.ep_proposal ?? 0)
+      ep_proposal !== undefined ? (ep_proposal ? 1 : 0) : (original.ep_proposal ?? 0),
+      sheet_type === 'gh' ? 'gh' : (sheet_type === 'as' ? 'as' : (original.sheet_type || 'as'))
     );
 
     const newReport = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(result_db.lastInsertRowid);
@@ -188,7 +190,7 @@ router.patch('/:id', authenticateToken, (req, res) => {
     stay_count, no_count, contract_plan,
     payment_method, notion_url, lesson_start_date,
     character_rights, join_reasons, decline_reasons, phone_number, details,
-    ep_proposal
+    ep_proposal, sheet_type: patchSheetType
   } = req.body;
 
   const nameEmailKey = makeNameEmailKey(
@@ -221,7 +223,8 @@ router.patch('/:id', authenticateToken, (req, res) => {
         phone_number      = ?,
         details           = ?,
         applicant_name_email = ?,
-        ep_proposal       = ?
+        ep_proposal       = ?,
+        sheet_type        = ?
       WHERE id = ?
     `).run(
       interviewer_id    ?? original.interviewer_id,
@@ -247,6 +250,7 @@ router.patch('/:id', authenticateToken, (req, res) => {
       details      ?? original.details,
       nameEmailKey,
       ep_proposal !== undefined ? (ep_proposal ? 1 : 0) : (original.ep_proposal ?? 0),
+      patchSheetType === 'gh' ? 'gh' : (patchSheetType === 'as' ? 'as' : (original.sheet_type || 'as')),
       id
     );
 
