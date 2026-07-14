@@ -325,7 +325,7 @@ const OneLoopPage = {
     const input = document.getElementById('gql-query-input');
     if (input) {
       input.value = `{
-  applicants(first: 10) {
+  applicants(first: 20) {
     pageInfo { hasNextPage endCursor }
     edges {
       node {
