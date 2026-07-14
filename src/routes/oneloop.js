@@ -46,19 +46,21 @@ function queryOneLoop(query, variables) {
   });
 }
 
+// One Loop GraphQL の複雑度上限: 300
+// フィールド数(10) × first で計算されるため first=20 が実質上限
+const ONELOOP_PAGE_SIZE = 20;
+
 // ============================================================
 // GET /api/oneloop/applicants
-//   ?first=20    取得件数（デフォルト20、最大100）
-//   ?after=xxx   ページネーション カーソル
+//   ?all=true    全件取得（ページネーションを自動で繰り返す、デフォルト true）
+//   ?after=xxx   単一ページ取得時のカーソル（all=false のときのみ有効）
 //   ?source=xxx  流入経路フィルタ（省略時: 全件）
 // ============================================================
 router.get('/applicants', authenticateToken, async (req, res) => {
-  const first  = Math.min(parseInt(req.query.first  || '20', 10), 100);
-  const after  = req.query.after  || null;
-  const source = req.query.source || null;
+  const fetchAll = req.query.all !== 'false'; // デフォルト true
+  const after    = req.query.after  || null;
+  const source   = req.query.source || null;
 
-  // source フィルタは GraphQL 変数で渡す
-  // One Loop の Applicant 型には source フィールドがあるため、フロントでフィルタする
   const query = `
     query GetApplicants($first: Int!, $after: String) {
       applicants(first: $first, after: $after) {
@@ -83,30 +85,46 @@ router.get('/applicants', authenticateToken, async (req, res) => {
     }
   `;
 
-  const variables = { first, after };
-
   try {
-    const result = await queryOneLoop(query, variables);
+    let allNodes   = [];
+    let cursor     = after;
+    let pageInfo   = {};
+    const MAX_PAGES = 50; // 無限ループ防止（最大 50 × 20 = 1000件）
 
-    if (result.status !== 200) {
-      return res.status(502).json({ error: `One Loop API エラー (${result.status})` });
-    }
-    if (result.body.errors) {
-      return res.status(400).json({ error: result.body.errors.map(e => e.message).join(', ') });
-    }
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const variables = { first: ONELOOP_PAGE_SIZE, after: cursor || null };
+      const result    = await queryOneLoop(query, variables);
 
-    const conn  = result.body.data?.applicants || {};
-    let   nodes = (conn.edges || []).map(e => e.node);
+      if (result.status !== 200) {
+        return res.status(502).json({ error: `One Loop API エラー (${result.status})` });
+      }
+      if (result.body.errors) {
+        return res.status(400).json({ error: result.body.errors.map(e => e.message).join(', ') });
+      }
+
+      const conn  = result.body.data?.applicants || {};
+      const nodes = (conn.edges || []).map(e => e.node);
+      pageInfo    = conn.pageInfo || {};
+
+      allNodes = allNodes.concat(nodes);
+
+      // 全件取得モードでなければ1ページで終了
+      if (!fetchAll) break;
+      // 次ページがなければ終了
+      if (!pageInfo.hasNextPage || !pageInfo.endCursor) break;
+
+      cursor = pageInfo.endCursor;
+    }
 
     // source フィルタ（サーバー側で絞り込み）
     if (source) {
-      nodes = nodes.filter(n => n.source === source);
+      allNodes = allNodes.filter(n => n.source === source);
     }
 
     res.json({
-      applicants: nodes,
-      pageInfo:   conn.pageInfo || {},
-      total:      nodes.length,
+      applicants: allNodes,
+      pageInfo:   fetchAll ? { hasNextPage: false } : pageInfo,
+      total:      allNodes.length,
     });
   } catch (err) {
     console.error('[oneloop] applicants error:', err);
