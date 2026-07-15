@@ -35,6 +35,27 @@ const UsersPage = {
           </div>
         </div>
 
+        <!-- ゲーハイ過去データ修正 -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-body" style="padding:12px 16px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--gray-700)">
+                  <i class="fas fa-gamepad" style="color:#7c3aed;margin-right:6px"></i>ゲーハイ過去報告 sheet_type 一括修正
+                </div>
+                <div style="font-size:11px;color:var(--gray-500);margin-top:2px">
+                  ゲーハイシートの応募者と一致する営業報告を <code>sheet_type='gh'</code> に一括更新します（修正前に入力された過去データの修正用）
+                </div>
+              </div>
+              <button class="btn btn-sm" id="backfill-sheet-type-btn"
+                style="margin-left:auto;background:#d97706;border-color:#d97706;color:white;white-space:nowrap">
+                <i class="fas fa-wrench"></i> 過去データを修正
+              </button>
+            </div>
+            <div id="backfill-sheet-type-result" style="display:none;margin-top:10px"></div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-body" style="padding:0">
             <div class="table-container" id="users-table-wrap">
@@ -104,6 +125,7 @@ const UsersPage = {
     document.getElementById('user-modal-cancel').addEventListener('click', () => this.closeModal());
     document.getElementById('user-modal-save').addEventListener('click', () => this.saveUser());
     document.getElementById('calendar-sync-btn').addEventListener('click', () => this.runCalendarSync());
+    document.getElementById('backfill-sheet-type-btn').addEventListener('click', () => this.runBackfillSheetType());
     await this.loadUsers();
   },
 
@@ -357,6 +379,51 @@ const UsersPage = {
     } finally {
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-sync-alt"></i> カレンダーを同期';
+    }
+  },
+
+  // ============================================================
+  // ゲーハイ過去データ sheet_type 一括修正
+  // ============================================================
+  async runBackfillSheetType() {
+    const btn      = document.getElementById('backfill-sheet-type-btn');
+    const resultEl = document.getElementById('backfill-sheet-type-result');
+    if (!btn || !resultEl) return;
+
+    if (!confirm('ゲーハイシートの応募者と一致する営業報告を sheet_type="gh" に一括更新します。\nよろしいですか？')) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 修正中...';
+    resultEl.style.display = 'none';
+
+    try {
+      const res = await API.post('/sales-reports/admin/backfill-sheet-type', {});
+
+      resultEl.innerHTML = `
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;border-radius:6px;padding:10px 14px">
+          <div style="font-weight:600;margin-bottom:6px">
+            <i class="fas fa-check-circle"></i> 修正完了
+          </div>
+          <div style="font-size:12px;line-height:1.8">
+            <div>ゲーハイ応募者キー数: <strong>${res.gh_applicant_keys}件</strong></div>
+            <div>営業報告 総件数: <strong>${res.total_reports}件</strong></div>
+            <div>今回 gh に更新: <strong style="color:#16a34a">${res.updated}件</strong></div>
+            <div>既に gh だったもの: <strong>${res.already_gh}件</strong></div>
+          </div>
+        </div>`;
+      resultEl.style.display = 'block';
+      Utils.notify(`ゲーハイ過去データを${res.updated}件修正しました`, 'success');
+    } catch (err) {
+      resultEl.innerHTML = `
+        <div class="alert alert-error">
+          <i class="fas fa-exclamation-circle"></i>
+          <span>修正エラー: ${Utils.escHtml(err.message)}</span>
+        </div>`;
+      resultEl.style.display = 'block';
+      Utils.notify('修正に失敗しました', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-wrench"></i> 過去データを修正';
     }
   }
 };

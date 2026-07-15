@@ -358,4 +358,137 @@ router.get('/stats/monthly', authenticateToken, (req, res) => {
   res.json(months);
 });
 
+// ============================================================
+// POST /api/sales-reports/admin/backfill-sheet-type
+//   ゲーハイシートの全応募者キーを取得し、一致する営業報告を
+//   sheet_type='gh' に一括更新する（過去データ修正用）
+//   admin 権限のみ実行可能
+// ============================================================
+router.post('/admin/backfill-sheet-type', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'admin only' });
+  }
+
+  try {
+    const { google } = require('googleapis');
+
+    // Google Sheets クライアント取得
+    async function getSheets() {
+      const credentials = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      if (credentials) {
+        const auth = new google.auth.GoogleAuth({
+          credentials: JSON.parse(credentials),
+          scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+        });
+        return google.sheets({ version: 'v4', auth });
+      } else if (process.env.GOOGLE_API_KEY) {
+        return google.sheets({ version: 'v4', auth: process.env.GOOGLE_API_KEY });
+      }
+      throw new Error('Google認証情報が設定されていません');
+    }
+
+    const SPREADSHEET_ID = '1H0CctpkCJ4PVZ5cf1YYI7_elNwUu0uIcHIHMNTHYHW4';
+    const GH_RANGE       = 'ゲーハイ（EP）!A1:AA';
+
+    const sheets  = await getSheets();
+    const resp    = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: GH_RANGE,
+    });
+
+    const rows = resp.data.values;
+    if (!rows || rows.length < 2) {
+      return res.json({ updated: 0, message: 'ゲーハイシートにデータがありません' });
+    }
+
+    const headers = rows[0];
+    const COL_LAST_NAME  = headers.findIndex(h => h && h.trim() === '姓');
+    const COL_FIRST_NAME = headers.findIndex(h => h && h.trim() === '名');
+    const COL_EMAIL      = headers.findIndex(h => h && h.trim() === 'メールアドレス');
+    const COL_FULL_NAME  = headers.findIndex(h => h && h.trim() === '氏名（本名）');
+
+    // ゲーハイ応募者の applicant_name_email キーセットを生成
+    // sales_reports の makeNameEmailKey と同じロジック:
+    //   normalName  = fullName の空白除去・小文字
+    //   normalEmail = email の小文字・trim
+    //   key = `${normalName}::${normalEmail}`
+    const ghKeys = new Set();
+    // フルネームのみのキー（email なし応募者用）
+    const ghNameOnlyKeys = new Set();
+
+    rows.slice(1).forEach(row => {
+      while (row.length < headers.length) row.push('');
+      const lastName  = COL_LAST_NAME  >= 0 ? (row[COL_LAST_NAME]  || '').trim() : '';
+      const firstName = COL_FIRST_NAME >= 0 ? (row[COL_FIRST_NAME] || '').trim() : '';
+      const email     = COL_EMAIL      >= 0 ? (row[COL_EMAIL]      || '').trim() : '';
+      const fullNameCol = COL_FULL_NAME >= 0 ? (row[COL_FULL_NAME] || '').trim() : '';
+      const fullName  = fullNameCol || `${lastName}${firstName}`.trim();
+      if (!fullName && !email) return;
+
+      const normalName  = fullName.replace(/[\s\u3000]/g, '').toLowerCase();
+      const normalEmail = email.toLowerCase();
+      ghKeys.add(`${normalName}::${normalEmail}`);
+
+      // emailなし応募者: normalName:: でも引っかかるよう追加
+      if (!email) {
+        ghNameOnlyKeys.add(normalName);
+      }
+    });
+
+    // sales_reports の全件を取得して照合
+    const all = db.prepare('SELECT id, applicant_name_email, applicant_full_name, applicant_email, sheet_type FROM sales_reports').all();
+
+    // 一致判定: applicant_name_email がゲーハイキーセットに含まれるか
+    // フォールバック: applicant_name_email が NULL の旧レコードは
+    //   full_name + email で再生成して照合
+    const toUpdate = [];
+    const skipped  = [];
+
+    all.forEach(r => {
+      const key = r.applicant_name_email || (() => {
+        const n = (r.applicant_full_name || '').replace(/[\s\u3000]/g, '').toLowerCase();
+        const e = (r.applicant_email    || '').toLowerCase().trim();
+        return `${n}::${e}`;
+      })();
+
+      const matched = ghKeys.has(key) || (() => {
+        // email なし応募者: normalName 部分だけで照合
+        const namePart = key.split('::')[0];
+        return ghNameOnlyKeys.has(namePart);
+      })();
+
+      if (matched) {
+        if (r.sheet_type !== 'gh') {
+          toUpdate.push(r.id);
+        } else {
+          skipped.push(r.id); // 既に 'gh' のものはスキップ
+        }
+      }
+    });
+
+    // トランザクションで一括 UPDATE
+    const updateStmt = db.prepare('UPDATE sales_reports SET sheet_type = ? WHERE id = ?');
+    const runUpdate  = db.transaction((ids) => {
+      for (const id of ids) {
+        updateStmt.run('gh', id);
+      }
+    });
+    runUpdate(toUpdate);
+
+    console.log(`[backfill-sheet-type] updated=${toUpdate.length}, already_gh=${skipped.length}, total_gh_keys=${ghKeys.size}`);
+
+    res.json({
+      message: `ゲーハイ営業報告の sheet_type を一括修正しました`,
+      gh_applicant_keys: ghKeys.size,
+      total_reports:     all.length,
+      updated:           toUpdate.length,
+      already_gh:        skipped.length,
+      updated_ids:       toUpdate,
+    });
+  } catch (err) {
+    console.error('[backfill-sheet-type] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
