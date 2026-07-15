@@ -58,6 +58,12 @@ const App = {
       title: 'ユーザー管理',
       adminOnly: true,
     },
+    oneloop: {
+      nav: 'nav-oneloop',
+      module: () => OneLoopPage,
+      title: 'One Loop 連携',
+      adminOnly: false,
+    },
   },
 
   init() {
@@ -184,6 +190,13 @@ const App = {
         icon: 'fa-user-cog',
         label: 'ユーザー管理',
         show: isAdmin,
+      },
+      {
+        id: 'nav-oneloop',
+        page: 'oneloop',
+        icon: 'fa-plug',
+        label: 'One Loop 連携',
+        show: true,
       },
     ];
 

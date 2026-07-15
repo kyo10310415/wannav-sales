@@ -1231,7 +1231,7 @@ const ApplicantsPage = {
   openSalesReport(safeId) {
     const a = this._cache?.[safeId];
     if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
-    SalesReportModal.open(a, null);
+    SalesReportModal.open(a, null, this.activeTab || 'as');
   },
 
   async editReport(safeId, reportId) {
@@ -1239,7 +1239,9 @@ const ApplicantsPage = {
     if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
     try {
       const report = await API.salesReports.get(reportId);
-      SalesReportModal.open(a, report);
+      // 既存レポートのsheet_typeがあればそれを優先、なければ現在のタブを使用
+      const sheetType = report.sheet_type || this.activeTab || 'as';
+      SalesReportModal.open(a, report, sheetType);
     } catch (e) {
       Utils.notify('エラーが発生しました', 'error');
     }

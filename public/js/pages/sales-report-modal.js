@@ -59,9 +59,10 @@ const SalesReportModal = {
     </div>`;
   },
 
-  async open(applicant, existingReport = null) {
+  async open(applicant, existingReport = null, sheetType = 'as') {
     this.applicant = applicant;
     this.editingReport = existingReport;
+    this.sheetType = sheetType;  // 'as' | 'gh'
     this.editMode = 'overwrite'; // 編集時はデフォルト「上書き」
 
     try {
@@ -379,6 +380,7 @@ const SalesReportModal = {
       phone_number:      document.getElementById('sr-phone').value.trim(),
       details:           document.getElementById('sr-details').value.trim(),
       ep_proposal:       document.getElementById('sr-ep-proposal').checked ? 1 : 0,
+      sheet_type:        this.sheetType || 'as',
     };
 
     try {
