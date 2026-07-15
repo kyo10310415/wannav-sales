@@ -407,7 +407,7 @@ const SukuukunHistoryModal = {
   async _deleteEval(id) {
     if (!confirm('この採点履歴を削除しますか？\nこの操作は取り消せません。')) return;
     try {
-      await API.history.deleteEval(id);
+      await API.sukuukun.history.deleteEval(id);
       // キャッシュから削除
       this._cachedEvals = (this._cachedEvals || []).filter(e => e.id !== id);
       if (this._lastOpenArgs) {
@@ -429,7 +429,7 @@ const SukuukunHistoryModal = {
   async _deleteSpeech(id) {
     if (!confirm('この発話比率分析を削除しますか？\nこの操作は取り消せません。')) return;
     try {
-      await API.history.deleteSpeech(id);
+      await API.sukuukun.history.deleteSpeech(id);
       // キャッシュから削除
       this._cachedSpeeches = (this._cachedSpeeches || []).filter(s => s.id !== id);
       if (this._lastOpenArgs) {
