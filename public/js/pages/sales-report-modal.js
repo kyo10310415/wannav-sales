@@ -87,8 +87,10 @@ const SalesReportModal = {
 
     const r = this.editingReport || {};
     const applicant = this.applicant;
+    // スプレッドシートの full_name（姓名スペースなし）と合わせるため
+    // last_name + first_name をスペースなしで結合する
     const fullName = applicant
-      ? `${applicant.last_name || ''} ${applicant.first_name || ''}`.trim()
+      ? `${applicant.last_name || ''}${applicant.first_name || ''}`.trim()
       : (r.applicant_full_name || '');
 
     const overlay = document.createElement('div');
@@ -150,7 +152,7 @@ const SalesReportModal = {
               <div class="form-group">
                 <label class="form-label">氏名（フルネーム）<span class="required">*</span></label>
                 <input type="text" id="sr-fullname" class="form-control"
-                  value="${Utils.escHtml(r.applicant_full_name || fullName)}" placeholder="姓 名" required>
+                  value="${Utils.escHtml(r.applicant_full_name || fullName)}" placeholder="姓名" required>
               </div>
             </div>
 

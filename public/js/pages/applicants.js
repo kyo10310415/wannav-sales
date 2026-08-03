@@ -567,16 +567,20 @@ const ApplicantsPage = {
 
   getReportsForApplicant(a) {
     // 同一人物の報告を全件返す（新しい順）
-    const aEmail = (a.email || '').toLowerCase().trim();
-    const matches = this.reports.filter(r => {
+    // 氏名の正規化: スペース（全角・半角）除去＋小文字化で比較
+    //   スプレッドシート: "田中太郎"（スペースなし）
+    //   営業報告モーダル: "田中 太郎"（スペースあり）で保存された既存データも救う
+    const normName = s => (s || '').replace(/[\s\u3000]/g, '').toLowerCase();
+    const aEmail   = (a.email || '').toLowerCase().trim();
+    const aName    = normName(a.full_name);
+    const matches  = this.reports.filter(r => {
       const rEmail = (r.applicant_email || '').toLowerCase().trim();
-      if (aEmail && rEmail) {
-        return rEmail === aEmail && r.applicant_full_name === a.full_name;
-      }
-      if (!aEmail && !rEmail) {
-        return r.applicant_full_name === a.full_name;
-      }
-      return r.applicant_full_name === a.full_name;
+      const rName  = normName(r.applicant_full_name);
+      // 名前が一致しない場合は除外（空同士は除外）
+      if (!aName || !rName || aName !== rName) return false;
+      // メールが両方あれば一致確認、片方のみ or 両方なしは名前一致で紐付け
+      if (aEmail && rEmail) return rEmail === aEmail;
+      return true;
     });
     return matches.sort((x, y) => y.id - x.id);
   },
