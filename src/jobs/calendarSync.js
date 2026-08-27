@@ -15,6 +15,7 @@ const { google }          = require('googleapis');
 const db                  = require('../database');
 const spreadsheetRoute    = require('../routes/spreadsheet');
 const spreadsheetCache    = spreadsheetRoute.cache;
+const { syncCalendarEvents } = require('../services/calendarInterviewSync');
 
 // ── 状態管理（外部から参照可能） ─────────────────────────────
 const state = {
@@ -169,6 +170,7 @@ async function runOnce() {
               description: ev.description || '',
               startDt:     ev.start?.dateTime || ev.start?.date,
               guestName:   extractGuestName(ev.summary, ev.description),
+              guestEmail:  extractEmailFromDescription(ev.description),
             });
           }
           pageToken = resp.data.nextPageToken;
@@ -184,74 +186,19 @@ async function runOnce() {
       ? spreadsheetCache.data.applicants
       : [];
 
-    const emailToKey = new Map();
-    for (const ap of sheetApplicants) {
-      if (ap.email) emailToKey.set(ap.email.toLowerCase().trim(), ap.email.trim());
-    }
-
-    const allDateKeys = db.prepare(
-      'SELECT applicant_key FROM applicant_interview_dates'
-    ).all().map(r => r.applicant_key);
-
-    const upsert = db.prepare(`
-      INSERT INTO applicant_interview_dates (applicant_key, interview_date, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(applicant_key) DO UPDATE SET
-        interview_date = excluded.interview_date,
-        updated_at     = CURRENT_TIMESTAMP
-    `);
-
-    let matchedCount   = 0;
-    let unmatchedCount = 0;
-
-    for (const ev of allEvents) {
-      if (!ev.startDt) continue;
-
-      const guestEmail = extractEmailFromDescription(ev.description);
-      const guestName  = ev.guestName;
-      let matched      = null;
-
-      // ① メール照合
-      if (guestEmail) {
-        const key = emailToKey.get(guestEmail.toLowerCase().trim());
-        if (key) matched = key;
-      }
-
-      // ② 氏名照合（スプレッドシートキャッシュ）
-      if (!matched && guestName) {
-        const normGuest = normalizeName(guestName);
-        for (const ap of sheetApplicants) {
-          if (ap.full_name && normalizeName(ap.full_name) === normGuest) {
-            matched = ap.email?.trim() || ap.full_name;
-            break;
-          }
-        }
-      }
-
-      // ③ 既存キーとの照合
-      if (!matched && guestName) {
-        const normGuest = normalizeName(guestName);
-        for (const key of allDateKeys) {
-          if (normalizeName(key) === normGuest) {
-            matched = key;
-            break;
-          }
-        }
-      }
-
-      if (matched) {
-        upsert.run(matched, ev.startDt.substring(0, 10));
-        matchedCount++;
-      } else {
-        unmatchedCount++;
-      }
-    }
+    const { results } = syncCalendarEvents(db, allEvents, sheetApplicants);
+    const matchedCount = results.filter(r => r.matched).length;
+    const unmatchedCount = results.filter(r => !r.matched).length;
+    const protectedCount = results.filter(r => r.protected).length;
+    const ambiguousCount = results.filter(r => r.ambiguous).length;
 
     const result = {
       at:          state.lastRunAt.toISOString(),
       totalEvents: allEvents.length,
       matched:     matchedCount,
       unmatched:   unmatchedCount,
+      protected:   protectedCount,
+      ambiguous:   ambiguousCount,
     };
     state.lastResult = result;
 

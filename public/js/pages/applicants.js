@@ -150,6 +150,7 @@ const ApplicantsPage = {
                   <option value="契約＆職業案内">契約＆職業案内</option>
                   <option value="クーリングオフ">クーリングオフ</option>
                   <option value="飛び">飛び（無断キャンセル）</option>
+                  <option value="AIレコメン">AIレコメン</option>
                   <option value="保留">保留</option>
                   <option value="NG">NG</option>
                   <option value="その他">その他</option>
@@ -576,11 +577,10 @@ const ApplicantsPage = {
     const matches  = this.reports.filter(r => {
       const rEmail = (r.applicant_email || '').toLowerCase().trim();
       const rName  = normName(r.applicant_full_name);
-      // 名前が一致しない場合は除外（空同士は除外）
-      if (!aName || !rName || aName !== rName) return false;
-      // メールが両方あれば一致確認、片方のみ or 両方なしは名前一致で紐付け
+      // メールが両方にある場合はメールを最優先。
+      // メールが利用できない場合のみ氏名完全一致にフォールバックする。
       if (aEmail && rEmail) return rEmail === aEmail;
-      return true;
+      return !!aName && !!rName && aName === rName;
     });
     return matches.sort((x, y) => y.id - x.id);
   },
@@ -946,6 +946,10 @@ const ApplicantsPage = {
                   onclick="ApplicantsPage.editReport('${safeId}',${report.id})">
                   <i class="fas fa-plus-circle"></i> 追記
                 </button>
+                <button class="btn btn-xs" style="font-size:10px;padding:2px 6px;background:#eff6ff;border:1px solid #93c5fd;color:#1d4ed8"
+                  onclick="ApplicantsPage.viewReportHistory('${safeId}')">
+                  <i class="fas fa-history"></i> 履歴
+                </button>
               </div>`
             : `<button class="btn btn-primary btn-xs" style="font-size:10px;padding:3px 6px"
                 onclick="ApplicantsPage.openSalesReport('${safeId}')">
@@ -1248,6 +1252,117 @@ const ApplicantsPage = {
       SalesReportModal.open(a, report, sheetType);
     } catch (e) {
       Utils.notify('エラーが発生しました', 'error');
+    }
+  },
+
+  viewReportHistory(safeId) {
+    const applicant = this._cache?.[safeId];
+    if (!applicant) { Utils.notify('データが見つかりません', 'error'); return; }
+    const reports = this.getReportsForApplicant(applicant);
+
+    const old = document.getElementById('sales-report-history-overlay');
+    if (old) old.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'sales-report-history-overlay';
+    overlay.className = 'modal-overlay';
+    overlay.style.display = 'flex';
+
+    const field = (label, value) => `
+      <div style="min-width:130px;flex:1">
+        <div style="font-size:10px;color:var(--gray-400);margin-bottom:2px">${label}</div>
+        <div style="font-size:12px;color:var(--gray-700);white-space:pre-wrap;word-break:break-word">${Utils.escHtml(value || '—')}</div>
+      </div>`;
+
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:900px;width:94vw">
+        <div class="modal-header">
+          <div>
+            <div class="modal-title"><i class="fas fa-history" style="color:#2563eb;margin-right:7px"></i>営業報告履歴</div>
+            <div style="font-size:12px;color:var(--gray-500);margin-top:3px">
+              ${Utils.escHtml(applicant.full_name || '')}${applicant.email ? `（${Utils.escHtml(applicant.email)}）` : ''} / ${reports.length}件
+            </div>
+          </div>
+          <button class="modal-close" onclick="ApplicantsPage.closeReportHistory()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body" style="max-height:72vh;overflow-y:auto;background:#f8fafc">
+          ${reports.length === 0 ? `
+            <div class="empty-state" style="padding:40px"><i class="fas fa-clipboard"></i><p>営業報告はありません</p></div>` : reports.map((report, index) => `
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:12px">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+                <div>
+                  <span style="font-size:11px;font-weight:700;color:#1d4ed8;background:#dbeafe;border-radius:5px;padding:2px 7px">報告 #${report.id}</span>
+                  ${index === 0 ? '<span style="font-size:10px;color:#166534;background:#dcfce7;border-radius:5px;padding:2px 7px;margin-left:5px">最新</span>' : ''}
+                  <span style="font-size:11px;color:var(--gray-500);margin-left:8px">${Utils.escHtml(report.created_at || '—')}</span>
+                </div>
+                <div style="display:flex;gap:6px">
+                  <button class="btn btn-secondary btn-xs" onclick="ApplicantsPage.editHistoryReport('${safeId}',${report.id})">
+                    <i class="fas fa-pen"></i> 編集
+                  </button>
+                  <button class="btn btn-xs" style="background:#fff1f2;border:1px solid #fda4af;color:#be123c" onclick="ApplicantsPage.deleteHistoryReport('${safeId}',${report.id})">
+                    <i class="fas fa-trash"></i> 削除
+                  </button>
+                </div>
+              </div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid #f1f5f9">
+                ${field('面接日', report.interview_date)}
+                ${field('営業担当者', report.interviewer_name)}
+                ${field('営業結果', report.result)}
+                ${field('面接内容', report.interview_content)}
+              </div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;padding-top:10px">
+                ${field('契約プラン', report.contract_plan)}
+                ${field('支払方法', report.payment_method)}
+                ${field('STAY / NO', `${report.stay_count ?? 0} / ${report.no_count ?? 0}`)}
+                ${field('学籍番号', report.student_number)}
+                ${field('入会理由', report.join_reasons)}
+                ${field('辞退理由', report.decline_reasons)}
+                ${field('電話番号', report.phone_number)}
+                ${field('詳細', report.details)}
+              </div>
+            </div>`).join('')}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" onclick="ApplicantsPage.closeReportHistory();ApplicantsPage.openSalesReport('${safeId}')">
+            <i class="fas fa-plus"></i> 新しい報告
+          </button>
+          <button class="btn btn-secondary" onclick="ApplicantsPage.closeReportHistory()">閉じる</button>
+        </div>
+      </div>`;
+
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) this.closeReportHistory();
+    });
+    document.body.appendChild(overlay);
+  },
+
+  closeReportHistory() {
+    document.getElementById('sales-report-history-overlay')?.remove();
+  },
+
+  async editHistoryReport(safeId, reportId) {
+    this.closeReportHistory();
+    await this.editReport(safeId, reportId);
+  },
+
+  async deleteHistoryReport(safeId, reportId) {
+    const report = this.reports.find(row => row.id === reportId);
+    const label = report?.result ? `「${report.result}」` : `#${reportId}`;
+    if (!window.confirm(`営業報告 ${label} を削除しますか？\nこの操作は取り消せません。`)) return;
+
+    try {
+      await API.salesReports.delete(reportId);
+      this.closeReportHistory();
+      const [reports, dates] = await Promise.all([
+        API.salesReports.list(),
+        API.interviewDates.list(),
+      ]);
+      this.reports = reports || [];
+      this.interviewDates = dates || {};
+      this.filterAndRender();
+      Utils.notify('営業報告を削除しました', 'success');
+    } catch (error) {
+      Utils.notify('営業報告の削除に失敗しました: ' + error.message, 'error');
     }
   },
 

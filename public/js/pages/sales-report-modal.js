@@ -16,7 +16,7 @@ const SalesReportModal = {
     '契約','辞退','不合格','飛び','持ち帰り','一次面接','別日にスクールの話',
     '契約＆職業案内','持ち帰りから契約','職業案内','リスケ','二次面接辞退',
     'スクールの話を辞退','体験レッスン','契約＆職業案内（CP）','提携先へ案内',
-    'クーリングオフ','クーリングオフ阻止'
+    'AIレコメン','クーリングオフ','クーリングオフ阻止'
   ],
   STAY_COUNT_OPTIONS: ['0','1','2','3','4','5'],
   NO_COUNT_OPTIONS:   ['0','1','2','3','4','5'],
@@ -401,7 +401,13 @@ const SalesReportModal = {
       this.close();
 
       if (typeof ApplicantsPage !== 'undefined') {
-        await ApplicantsPage.loadReports();
+        const [reports, dates] = await Promise.all([
+          API.salesReports.list(),
+          API.interviewDates.list(),
+        ]);
+        ApplicantsPage.reports = reports || [];
+        ApplicantsPage.interviewDates = dates || {};
+        ApplicantsPage.filterAndRender();
       }
     } catch (err) {
       errorEl.style.display = 'flex';

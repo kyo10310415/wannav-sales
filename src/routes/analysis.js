@@ -20,6 +20,10 @@ const spreadsheetRoute = require('./spreadsheet');
 const spreadsheetCache = spreadsheetRoute.cache;
 const surpriseCallRoute = require('./surpriseCall');
 const surpriseCallCache = surpriseCallRoute.cache;
+const {
+  dedupeReportResults,
+  summarizeReportEvents,
+} = require('../services/reportMetrics');
 
 // ── スプレッドシート書き込み用クライアント ──────────────────
 async function getWritableSheetsClient() {
@@ -132,18 +136,33 @@ router.post('/run', authenticateToken, async (req, res) => {
   // ── ② 営業報告データ取得（期間フィルター込み） ─────────────
   const reports = db.prepare(`
     SELECT
-      sr.id, sr.interviewer_name, sr.applicant_full_name,
+      sr.id, sr.parent_id, sr.interviewer_name, sr.applicant_full_name, sr.applicant_email,
       sr.interview_date, sr.interview_content, sr.result,
       sr.stay_count, sr.no_count,
       sr.contract_plan, sr.payment_method, sr.character_rights,
       sr.join_reasons, sr.decline_reasons, sr.details,
       sr.student_number,
-      sr.created_at
+      sr.created_at,
+      COALESCE(root.created_at, sr.created_at) AS first_created_at,
+      (SELECT MIN(
+          COALESCE(
+            NULLIF(ns.interview_date, ''),
+            DATE(COALESCE(ns_root.created_at, ns.created_at), '+9 hours')
+          )
+        )
+        FROM sales_reports ns
+        LEFT JOIN sales_reports ns_root ON ns_root.id = ns.parent_id
+        WHERE COALESCE(ns.parent_id, ns.id) = COALESCE(sr.parent_id, sr.id)
+          AND ns.result = '飛び'
+      ) AS first_noshow_date
     FROM sales_reports sr
-    WHERE (sr.interview_date BETWEEN ? AND ?)
-       OR (sr.interview_date IS NULL AND DATE(sr.created_at) BETWEEN ? AND ?)
+    LEFT JOIN sales_reports root ON root.id = sr.parent_id
+    WHERE COALESCE(
+      NULLIF(sr.interview_date, ''),
+      DATE(COALESCE(root.created_at, sr.created_at), '+9 hours')
+    ) BETWEEN ? AND ?
     ORDER BY sr.interview_date DESC, sr.created_at DESC
-  `).all(from, to, from, to);
+  `).all(from, to);
 
   // ── ②' Notion プロファイル取得（学籍番号で紐付け） ──────────
   const notionProfiles = db.prepare(
@@ -183,6 +202,23 @@ router.post('/run', authenticateToken, async (req, res) => {
     .filter(v => !isNaN(v));
   const scAvgHeat = scHeatValues.length > 0
     ? Math.round(scHeatValues.reduce((s, v) => s + v, 0) / scHeatValues.length * 10) / 10
+    : null;
+
+  // 入会手続き満足度アンケート（サプライズコールシート内に既存）
+  const satisfactionRows = scInPeriod.filter(r =>
+    String(r['入会の手続きの満足度'] || '').trim() !== ''
+  );
+  const satisfactionDistribution = {};
+  const satisfactionNumeric = [];
+  for (const row of satisfactionRows) {
+    const raw = String(row['入会の手続きの満足度'] || '').trim();
+    satisfactionDistribution[raw] = (satisfactionDistribution[raw] || 0) + 1;
+    const match = raw.match(/-?\d+(?:\.\d+)?/);
+    if (match) satisfactionNumeric.push(Number(match[0]));
+  }
+  const satisfactionAverage = satisfactionNumeric.length > 0
+    ? Math.round(satisfactionNumeric.reduce((sum, value) => sum + value, 0) /
+      satisfactionNumeric.length * 10) / 10
     : null;
 
   // 架電時間帯別集計
@@ -236,6 +272,7 @@ router.post('/run', authenticateToken, async (req, res) => {
     `架電結果:${r['架電結果'] || '-'} ` +
     `熱量:${r['今の熱量を0~10点で教えてください'] || '-'} ` +
     `ステータス:${r['ステータス'] || '-'} ` +
+    (r['入会の手続きの満足度'] ? `手続き満足度:${r['入会の手続きの満足度']} ` : '') +
     (r['担当者は信頼できるか？'] ? `信頼度:${r['担当者は信頼できるか？']} ` : '') +
     (r['口コミ共有済み'] ? `口コミ:${r['口コミ共有済み']} ` : '') +
     (r['お手続きの中で不安に感じた点'] ? `不安点:${r['お手続きの中で不安に感じた点'].slice(0, 40)}` : '')
@@ -293,7 +330,8 @@ router.post('/run', authenticateToken, async (req, res) => {
 
   const sheetInPeriod = sheetApplicants.filter(a => {
     if (!a.date_parsed) return false;
-    const d = a.date_parsed.toISOString().slice(0, 10);
+    const pad = value => String(value).padStart(2, '0');
+    const d = `${a.date_parsed.getFullYear()}-${pad(a.date_parsed.getMonth() + 1)}-${pad(a.date_parsed.getDate())}`;
     return d >= from && d <= to;
   });
 
@@ -343,32 +381,45 @@ router.post('/run', authenticateToken, async (req, res) => {
   });
 
   // ── ⑤ 集計データを生成 ───────────────────────────────────
-  const totalReports    = mergedReports.length;
-  const contractCount   = mergedReports.filter(r => CONTRACT_RESULTS.has(r.result)).length;
+  // 履歴行は保持したまま、集計上のみ「同一人物＋同一面接日＋同結果」を重複排除。
+  const metricReports   = dedupeReportResults(mergedReports);
+  const reportMetrics   = summarizeReportEvents(metricReports);
+  const rawReportCount  = mergedReports.length;
+  const totalReports    = reportMetrics.total_interviews;
+  const contractCount   = reportMetrics.total_contracts;
   const cvrPct          = totalReports > 0
     ? Math.round(contractCount / totalReports * 1000) / 10 : 0;
 
   // 担当者別集計
   const byInterviewer = {};
-  for (const r of mergedReports) {
-    const name = r.interviewer_name || '不明';
-    if (!byInterviewer[name]) byInterviewer[name] = { total: 0, contract: 0, results: {} };
-    byInterviewer[name].total++;
-    if (CONTRACT_RESULTS.has(r.result)) byInterviewer[name].contract++;
-    const res_ = r.result || '未記入';
-    byInterviewer[name].results[res_] = (byInterviewer[name].results[res_] || 0) + 1;
+  const interviewerNames = [...new Set(metricReports.map(r => r.interviewer_name || '不明'))];
+  for (const name of interviewerNames) {
+    const rows = metricReports.filter(r => (r.interviewer_name || '不明') === name);
+    const metrics = summarizeReportEvents(rows);
+    const results = {};
+    for (const row of rows) {
+      const result = row.result || '未記入';
+      results[result] = (results[result] || 0) + 1;
+    }
+    byInterviewer[name] = {
+      total: metrics.total_interviews,
+      contract: metrics.total_contracts,
+      noshow: metrics.total_noshow,
+      ai_recommend: metrics.total_ai_recommend,
+      results,
+    };
   }
 
   // 結果別集計
   const byResult = {};
-  for (const r of mergedReports) {
+  for (const r of metricReports) {
     const res_ = r.result || '未記入';
     byResult[res_] = (byResult[res_] || 0) + 1;
   }
 
   // 面接内容別集計
   const byContent = {};
-  for (const r of mergedReports) {
+  for (const r of metricReports) {
     const c = r.interview_content || '未記入';
     if (!byContent[c]) byContent[c] = { total: 0, contract: 0 };
     byContent[c].total++;
@@ -377,21 +428,21 @@ router.post('/run', authenticateToken, async (req, res) => {
 
   // 支払い方法別集計
   const byPayment = {};
-  for (const r of mergedReports) {
+  for (const r of metricReports) {
     const p = r.payment_method || '未記入';
     byPayment[p] = (byPayment[p] || 0) + 1;
   }
 
   // STAY/NO 平均
-  const avgStay = totalReports > 0
-    ? Math.round(mergedReports.reduce((s, r) => s + (r.stay_count || 0), 0) / totalReports * 10) / 10 : 0;
-  const avgNo = totalReports > 0
-    ? Math.round(mergedReports.reduce((s, r) => s + (r.no_count || 0), 0) / totalReports * 10) / 10 : 0;
+  const avgStay = metricReports.length > 0
+    ? Math.round(metricReports.reduce((s, r) => s + (r.stay_count || 0), 0) / metricReports.length * 10) / 10 : 0;
+  const avgNo = metricReports.length > 0
+    ? Math.round(metricReports.reduce((s, r) => s + (r.no_count || 0), 0) / metricReports.length * 10) / 10 : 0;
 
   // 入会理由 / 辞退理由 集計
   const joinReasonCount = {};
   const declineReasonCount = {};
-  for (const r of mergedReports) {
+  for (const r of metricReports) {
     (r.join_reasons || '').split(',').map(s => s.trim()).filter(Boolean).forEach(reason => {
       joinReasonCount[reason] = (joinReasonCount[reason] || 0) + 1;
     });
@@ -402,8 +453,8 @@ router.post('/run', authenticateToken, async (req, res) => {
 
   // ── ⑤'' クーリングオフ専用集計 ──────────────────────────────
   const COOLINGOFF_RESULT = 'クーリングオフ';
-  const coolingoffReports = mergedReports.filter(r => r.result === COOLINGOFF_RESULT);
-  const coolingoffCount   = coolingoffReports.length;
+  const coolingoffReports = metricReports.filter(r => r.result === COOLINGOFF_RESULT);
+  const coolingoffCount   = reportMetrics.total_coolingoff;
 
   // 担当者別クーリングオフ数
   const coolingoffByInterviewer = {};
@@ -460,11 +511,11 @@ router.post('/run', authenticateToken, async (req, res) => {
   }
 
   // クーリングオフ率（面接件数に対する割合）
-  const coolingoffRatePct = totalReports > 0
-    ? Math.round(coolingoffCount / totalReports * 1000) / 10 : 0;
+  const coolingoffRatePct = contractCount > 0
+    ? Math.round(coolingoffCount / contractCount * 1000) / 10 : 0;
 
   // ── ⑤' Notion由来の集計 ───────────────────────────────────
-  const notionMatchedReports   = mergedReports.filter(r => r._notion_matched);
+  const notionMatchedReports   = metricReports.filter(r => r._notion_matched);
   const notionMatchCount       = notionMatchedReports.length;
   const notionContractReports  = notionMatchedReports.filter(r => CONTRACT_RESULTS.has(r.result));
 
@@ -554,7 +605,7 @@ router.post('/run', authenticateToken, async (req, res) => {
       const resultBreakdown = Object.entries(d.results)
         .sort((a, b) => b[1] - a[1])
         .map(([r, n]) => `${r}:${n}件`).join('、');
-      return `  - ${name}: 面接${d.total}件 / 契約${d.contract}件 / CVR${cvr}% | 結果内訳[${resultBreakdown}]`;
+      return `  - ${name}: 面接${d.total}件 / 契約${d.contract}件 / 飛び${d.noshow}件 / AIレコメン${d.ai_recommend}件 / CVR${cvr}% | 結果内訳[${resultBreakdown}]`;
     }).join('\n');
 
   const contentSummary = Object.entries(byContent)
@@ -625,7 +676,7 @@ router.post('/run', authenticateToken, async (req, res) => {
     }).join('\n');
 
   // 個別レコード（マージ済み・直近50件）
-  const recentRecords = mergedReports.slice(0, 50).map(r =>
+  const recentRecords = metricReports.slice(0, 50).map(r =>
     `[${r.interview_date || r.created_at?.slice(0, 10)}] 担当:${r.interviewer_name || '-'} ` +
     `応募者:${r.applicant_full_name || '-'} ` +
     (r._gender               ? `性別:${r._gender} `                        : '') +
@@ -676,7 +727,7 @@ router.post('/run', authenticateToken, async (req, res) => {
 
   const dataText = `
 【分析期間】${date_from || '全期間'} 〜 ${date_to || '現在'}
-【データ統合】営業報告DB ${totalReports}件 ＋ スプレッドシート ${sheetTotal}人（重複は営業報告を優先）＋ Notionプロファイル照合 ${notionMatchCount}件/${totalReports}件 ＋ すくう君評価 ${sukuukunEvals.length}件 ＋ サプライズコール ${scInPeriod.length}件（ユニーク${scUniqueCount}人）
+【データ統合】営業報告DB ${rawReportCount}行（集計用重複排除後 ${metricReports.length}行 / 面接イベント ${totalReports}件） ＋ スプレッドシート ${sheetTotal}人 ＋ Notionプロファイル照合 ${notionMatchCount}件/${metricReports.length}件 ＋ すくう君評価 ${sukuukunEvals.length}件 ＋ サプライズコール ${scInPeriod.length}件（ユニーク${scUniqueCount}人）
 
 【ファネル参考値（スプレッドシート）】※「面接予約→面接実施」の低転換は既知の構造的課題のため分析対象外
   応募者数:   ${sheetTotal}人
@@ -688,6 +739,8 @@ router.post('/run', authenticateToken, async (req, res) => {
 【営業報告サマリー（面接実施ベース）※分析の主軸データ】
   総面接件数:              ${totalReports}件
   契約件数:                ${contractCount}件
+  飛び件数:                ${reportMetrics.total_noshow}件
+  AIレコメン案内数:        ${reportMetrics.total_ai_recommend}件（予約者に含め、面接実施数には含めない）
   CVR（面接→契約）:        ${cvrPct}%
   クーリングオフ件数:      ${coolingoffCount}件（クーリングオフ率 ${coolingoffRatePct}%）
   平均STAYの回数:          ${avgStay}回
@@ -714,7 +767,7 @@ ${joinTop || '  データなし'}
 【辞退理由TOP】
 ${declineTop || '  データなし'}
 
-【Notion詳細データ統合（学籍番号一致: ${notionMatchCount}件 / 営業報告総数: ${totalReports}件）】
+【Notion詳細データ統合（学籍番号一致: ${notionMatchCount}件 / 集計用営業報告: ${metricReports.length}件）】
 ${notionMatchCount === 0 ? '  ※学籍番号が一致したレコードなし（Notion未連携または学籍番号未入力）' : ''}
 
 【最終学歴別集計（Notionデータ）】
@@ -764,6 +817,8 @@ ${sheetOnlyRecords || '  データなし'}
 【サプライズコールサマリー（期間内 ${scInPeriod.length}件 / ユニーク${scUniqueCount}人）】
 ${scInPeriod.length === 0 ? '  データなし（キャッシュ未取得または期間内データなし）' : `  架電到達率（ユニーク）: ${scReachRate}%（${scReachedUniqueStudents.size}人 / ${scUniqueCount}人）
   平均熱量: ${scAvgHeat !== null ? scAvgHeat + '点' : 'データなし'}
+  入会手続き満足度: 回答${satisfactionRows.length}件 / 平均${satisfactionAverage !== null ? satisfactionAverage + '点' : '数値回答なし'}
+  満足度分布: ${Object.entries(satisfactionDistribution).sort((a,b)=>b[1]-a[1]).map(([v,n])=>`${v}:${n}件`).join('、') || 'データなし'}
   CO件数: ${scCoRows.length}件 / CO率: ${scCoRate}%（${scCoRows.length}件 / ${scUniqueCount}人）
   口コミ共有済み: ${scSharedKuchikomi}件
   架電結果別:
@@ -885,7 +940,13 @@ methodフィールドは必ず埋めること（例: "t検定"、"相関分析"�
         date_from: date_from || null,
         date_to:   date_to   || null,
         total_reports:   totalReports,
+        raw_report_rows: rawReportCount,
         contract_count:  contractCount,
+        noshow_count:    reportMetrics.total_noshow,
+        ai_recommend_count: reportMetrics.total_ai_recommend,
+        satisfaction_count: satisfactionRows.length,
+        satisfaction_average: satisfactionAverage,
+        satisfaction_distribution: satisfactionDistribution,
         cvr:             cvrPct,
       },
       // export-sheet へそのまま渡すための生データ
@@ -901,6 +962,11 @@ methodフィールドは必ず埋めること（例: "t検定"、"相関分析"�
           declineReasonCount,
           avgStay,
           avgNo,
+          satisfaction: {
+            count: satisfactionRows.length,
+            average: satisfactionAverage,
+            distribution: satisfactionDistribution,
+          },
         },
       },
     });

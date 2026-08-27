@@ -2,6 +2,7 @@
 const AnalysisPage = {
   result: null,
   loading: false,
+  satisfactionRows: [],
   // 分析履歴（セッション内）
   history: [],
 
@@ -81,6 +82,18 @@ const AnalysisPage = {
             </div>
           </div>
 
+          <!-- 入会手続き満足度（AI実行前でも確認可能） -->
+          <div class="card" style="margin-bottom:16px;border-left:4px solid #8b5cf6">
+            <div class="card-header">
+              <div class="card-title" style="font-size:12px">
+                <i class="fas fa-smile" style="margin-right:6px;color:#8b5cf6"></i>入会手続き満足度
+              </div>
+            </div>
+            <div class="card-body" id="satisfaction-preview" style="padding:12px 16px">
+              <div style="font-size:11px;color:var(--gray-400)"><i class="fas fa-spinner fa-spin" style="margin-right:5px"></i>集計中...</div>
+            </div>
+          </div>
+
           <!-- 分析例カード -->
           <div class="card">
             <div class="card-header">
@@ -139,6 +152,62 @@ const AnalysisPage = {
         }
       });
     }
+    const reloadSatisfaction = () => this.renderSatisfactionPreview();
+    document.getElementById('analysis-date-from')?.addEventListener('change', reloadSatisfaction);
+    document.getElementById('analysis-date-to')?.addEventListener('change', reloadSatisfaction);
+    this.loadSatisfactionPreview();
+  },
+
+  async loadSatisfactionPreview() {
+    const preview = document.getElementById('satisfaction-preview');
+    try {
+      const data = await API.surpriseCall.list();
+      this.satisfactionRows = data.rows || [];
+      this.renderSatisfactionPreview();
+    } catch (error) {
+      if (preview) {
+        preview.innerHTML = `<div style="font-size:11px;color:var(--gray-400)">満足度データを取得できませんでした。</div>`;
+      }
+    }
+  },
+
+  renderSatisfactionPreview() {
+    const preview = document.getElementById('satisfaction-preview');
+    if (!preview) return;
+    const from = document.getElementById('analysis-date-from')?.value || '2000-01-01';
+    const to = document.getElementById('analysis-date-to')?.value || '2099-12-31';
+    const rows = this.satisfactionRows.filter(row => {
+      const timestamp = String(row['タイムスタンプ'] || '');
+      const date = timestamp.slice(0, 10).replace(/\//g, '-');
+      const value = String(row['入会の手続きの満足度'] || '').trim();
+      return value && date >= from && date <= to;
+    });
+    const distribution = {};
+    const numeric = [];
+    for (const row of rows) {
+      const value = String(row['入会の手続きの満足度'] || '').trim();
+      distribution[value] = (distribution[value] || 0) + 1;
+      const match = value.match(/-?\d+(?:\.\d+)?/);
+      if (match) numeric.push(Number(match[0]));
+    }
+    const average = numeric.length
+      ? Math.round(numeric.reduce((sum, value) => sum + value, 0) / numeric.length * 10) / 10
+      : null;
+
+    if (!rows.length) {
+      preview.innerHTML = `<div style="font-size:11px;color:var(--gray-400)">選択期間内に回答はありません。</div>`;
+      return;
+    }
+    preview.innerHTML = `
+      <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:9px">
+        <div><span style="font-size:24px;font-weight:800;color:#7c3aed">${rows.length}</span><span style="font-size:11px;color:#6d28d9">件</span></div>
+        <div style="font-size:11px;color:var(--gray-500)">数値平均: <strong>${average ?? '—'}${average != null ? '点' : ''}</strong></div>
+      </div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        ${Object.entries(distribution).map(([value, count]) => `
+          <span style="font-size:10px;border:1px solid #c4b5fd;color:#5b21b6;border-radius:10px;padding:2px 7px">${Utils.escHtml(value)}: ${count}件</span>
+        `).join('')}
+      </div>`;
   },
 
   // ────────────────────────────────────────────────────────────
@@ -178,6 +247,7 @@ const AnalysisPage = {
     const toEl   = document.getElementById('analysis-date-to');
     if (fromEl) fromEl.value = from;
     if (toEl)   toEl.value   = to;
+    this.renderSatisfactionPreview();
   },
 
   // ────────────────────────────────────────────────────────────
@@ -355,6 +425,32 @@ const AnalysisPage = {
           </div>
           <!-- 書き出し完了バナー（書き出し後に表示） -->
           <div id="analysis-export-banner" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- 入会手続き満足度 -->
+      <div class="card" style="margin-bottom:16px;border-left:4px solid #8b5cf6">
+        <div class="card-header">
+          <div class="card-title"><i class="fas fa-smile" style="margin-right:6px;color:#8b5cf6"></i>入会手続き満足度アンケート</div>
+        </div>
+        <div class="card-body" style="padding:14px 18px">
+          ${meta.satisfaction_count > 0 ? `
+            <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+              <div style="background:#f5f3ff;border-radius:9px;padding:10px 16px;min-width:120px">
+                <div style="font-size:10px;color:#6d28d9">回答数</div>
+                <div style="font-size:24px;font-weight:800;color:#7c3aed">${meta.satisfaction_count}<span style="font-size:12px">件</span></div>
+              </div>
+              <div style="background:#f5f3ff;border-radius:9px;padding:10px 16px;min-width:120px">
+                <div style="font-size:10px;color:#6d28d9">数値回答の平均</div>
+                <div style="font-size:24px;font-weight:800;color:#7c3aed">${meta.satisfaction_average ?? '—'}${meta.satisfaction_average != null ? '<span style="font-size:12px">点</span>' : ''}</div>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;flex:1">
+                ${Object.entries(meta.satisfaction_distribution || {}).map(([value, count]) => `
+                  <span style="font-size:11px;background:white;border:1px solid #c4b5fd;color:#5b21b6;border-radius:12px;padding:4px 9px">${Utils.escHtml(value)}: <strong>${count}件</strong></span>
+                `).join('')}
+              </div>
+            </div>` : `
+            <div style="font-size:12px;color:var(--gray-400)">選択期間内に満足度の回答データはありません。</div>`}
         </div>
       </div>
 

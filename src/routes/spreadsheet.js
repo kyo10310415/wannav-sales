@@ -112,8 +112,24 @@ async function getGoogleSheetsClient() {
 // ============================================================
 function parseApplicantDate(dateStr) {
   if (!dateStr) return null;
-  const d = new Date(dateStr.replace(/\//g, '-'));
+  const text = String(dateStr).trim();
+  const ymd = text.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+  if (ymd) {
+    // 当日の正午で生成し、UTC/ローカル変換による日付ずれを防ぐ。
+    const d = new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]), 12, 0, 0);
+    if (d.getFullYear() === Number(ymd[1]) &&
+        d.getMonth() === Number(ymd[2]) - 1 &&
+        d.getDate() === Number(ymd[3])) return d;
+    return null;
+  }
+  const d = new Date(text);
   return isNaN(d.getTime()) ? null : d;
+}
+
+function localDateString(date) {
+  if (!date) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 // ISO 8601 週番号を返す（utils.js の _isoWeekStr と同実装）
@@ -145,6 +161,13 @@ function isInPeriod(dateStr, period, value) {
     return _isoWeekStr(d) === value;
   }
   return true;
+}
+
+function isInCustomRange(dateStr, from, to) {
+  const d = parseApplicantDate(dateStr);
+  if (!d) return false;
+  const value = localDateString(d);
+  return value >= from && value <= to;
 }
 
 // ============================================================
@@ -423,7 +446,14 @@ router.get('/applicants/gh', authenticateToken, async (req, res) => {
 //   クエリパラメータ: period, value, sheet = 'as' | 'gh' | 'all'（デフォルト: 'as'）
 // ============================================================
 router.get('/applicants/count', authenticateToken, async (req, res) => {
-  const { period, value, sheet } = req.query;
+  const { period, value, sheet, date_from, date_to } = req.query;
+
+  if (period === 'custom' &&
+      (!/^\d{4}-\d{2}-\d{2}$/.test(date_from || '') ||
+       !/^\d{4}-\d{2}-\d{2}$/.test(date_to || '') ||
+       date_from > date_to)) {
+    return res.status(400).json({ error: '開始日と終了日を正しい順序で指定してください' });
+  }
 
   // sheet パラメータ: 'gh' → ゲーハイ, 'all' → 両シート合算, それ以外 → アススタ
   const targetSheet = sheet === 'gh' ? 'gh' : (sheet === 'all' ? 'all' : 'as');
@@ -440,12 +470,21 @@ router.get('/applicants/count', authenticateToken, async (req, res) => {
     }
 
     // アススタ集計
+    const filterApplicants = applicants => {
+      if (period === 'custom') {
+        return applicants.filter(a => isInCustomRange(a.date_str, date_from, date_to));
+      }
+      return (period && value)
+        ? applicants.filter(a => isInPeriod(a.date_str, period, value))
+        : applicants;
+    };
+
     const asFiltered = asData
-      ? ((period && value) ? asData.applicants.filter(a => isInPeriod(a.date_str, period, value)) : asData.applicants)
+      ? filterApplicants(asData.applicants)
       : [];
     // ゲーハイ集計
     const ghFiltered = ghData
-      ? ((period && value) ? ghData.applicants.filter(a => isInPeriod(a.date_str, period, value)) : ghData.applicants)
+      ? filterApplicants(ghData.applicants)
       : [];
 
     // 合算または個別
@@ -480,6 +519,8 @@ router.get('/applicants/count', authenticateToken, async (req, res) => {
       cv_count: cvCount,
       period,
       value,
+      date_from: date_from || null,
+      date_to: date_to || null,
       sheet: targetSheet,
       cached: (targetSheet === 'gh' ? cacheGh : cache).isValid(),
       cache_age_seconds: (targetSheet === 'gh' ? cacheGh : cache).ageSeconds(),

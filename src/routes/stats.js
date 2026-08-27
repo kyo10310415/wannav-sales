@@ -3,13 +3,53 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../database');
 const { authenticateToken } = require('../middleware/auth');
+const {
+  CONTRACT_RESULTS,
+  RESULT_NOSHOW,
+  RESULT_COOLING_OFF,
+  RESULT_AI_RECOMMEND,
+  sqlMetricDate,
+  sqlEventKey,
+  sqlFirstNoShowDate,
+  sqlNoShowEventKey,
+} = require('../services/reportMetrics');
 
 // ============================================================
 // 契約判定SQL
 // ============================================================
-const CONTRACT_CONDITION   = `result IN ('契約', '契約＆職業案内', '契約＆職業案内（CP）')`;
-const COOLINGOFF_CONDITION = `result = 'クーリングオフ'`;
-const NOSHOW_CONDITION     = `result = '飛び'`;
+const CONTRACT_CONDITION   = `sr.result IN (${CONTRACT_RESULTS.map(r => `'${r}'`).join(', ')})`;
+const COOLINGOFF_CONDITION = `sr.result = '${RESULT_COOLING_OFF}'`;
+const NOSHOW_CONDITION     = `sr.result = '${RESULT_NOSHOW}'`;
+const AI_RECOMMEND_CONDITION = `sr.result = '${RESULT_AI_RECOMMEND}'`;
+const INTERVIEW_CONDITION  = `NOT (${NOSHOW_CONDITION}) AND NOT (${AI_RECOMMEND_CONDITION})`;
+const EVENT_KEY            = sqlEventKey('sr');
+const METRIC_DATE          = sqlMetricDate('sr');
+const FIRST_NOSHOW_DATE    = sqlFirstNoShowDate('sr');
+const NOSHOW_EVENT_KEY     = sqlNoShowEventKey('sr');
+const FIRST_NOSHOW_CONDITION = `(${NOSHOW_CONDITION}) AND ${METRIC_DATE} = ${FIRST_NOSHOW_DATE}`;
+
+function isIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+function periodCondition(query) {
+  const { period, value, date_from, date_to } = query;
+  if (period === 'custom') {
+    if (!isIsoDate(date_from) || !isIsoDate(date_to) || date_from > date_to) {
+      return { error: '開始日と終了日を正しい順序で指定してください' };
+    }
+    return { condition: `${METRIC_DATE} BETWEEN ? AND ?`, params: [date_from, date_to] };
+  }
+  if (period === 'week' && value) {
+    return { condition: `${isoWeekPeriod(METRIC_DATE)} = ?`, params: [value] };
+  }
+  if (period === 'month' && value) {
+    return { condition: `strftime('%Y-%m', ${METRIC_DATE}) = ?`, params: [value] };
+  }
+  return { condition: '', params: [] };
+}
 
 // ============================================================
 // ISO 8601 週番号式（月曜始まり）
@@ -235,10 +275,11 @@ router.get('/weekly', authenticateToken, (req, res) => {
   const data = db.prepare(`
     SELECT
       ${weekFmt} as period,
-      SUM(CASE WHEN sr.parent_id IS NULL AND NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
-      SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
-      SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
-      SUM(CASE WHEN sr.parent_id IS NULL AND (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_noshow
+      COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) as total_interviews,
+      COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) as total_contracts,
+      COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) as total_coolingoff,
+      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) as total_noshow,
+      COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) as total_ai_recommend
     ${baseSQL}
     GROUP BY period
     HAVING period IS NOT NULL
@@ -266,10 +307,11 @@ router.get('/monthly', authenticateToken, (req, res) => {
   const data = db.prepare(`
     SELECT
       strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))) as period,
-      SUM(CASE WHEN sr.parent_id IS NULL AND NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
-      SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
-      SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
-      SUM(CASE WHEN sr.parent_id IS NULL AND (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_noshow
+      COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) as total_interviews,
+      COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) as total_contracts,
+      COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) as total_coolingoff,
+      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) as total_noshow,
+      COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) as total_ai_recommend
     ${baseSQL}
     GROUP BY period
     HAVING period IS NOT NULL
@@ -303,15 +345,10 @@ router.get('/summary', authenticateToken, (req, res) => {
   const { period, value, applicant_count, sheet_type } = req.query;
 
   // 期間フィルター
-  let periodCond = '';
-  let periodParams = [];
-  if (period === 'week' && value) {
-    periodCond   = `${isoWeekPeriod(`COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))`)} = ?`;
-    periodParams = [value];
-  } else if (period === 'month' && value) {
-    periodCond   = `strftime('%Y-%m', COALESCE(NULLIF(sr.interview_date,''), date(sr.first_created_at, '+9 hours'))) = ?`;
-    periodParams = [value];
-  }
+  const periodInfo = periodCondition(req.query);
+  if (periodInfo.error) return res.status(400).json({ error: periodInfo.error });
+  const periodCond = periodInfo.condition;
+  const periodParams = periodInfo.params;
 
   // 担当者・Notionフィルター
   const { conditions: filterConds, params: filterParams } = buildFilterSQL(req.query);
@@ -346,50 +383,35 @@ router.get('/summary', authenticateToken, (req, res) => {
 
   const baseSQL = `FROM ${dedup} ${joinClause} ${whereClause}`;
 
-  // 面接実施数 = 初回報告（parent_id IS NULL）のうち「飛び」を除外
-  const totalInterviewsRow = db.prepare(
-    `SELECT SUM(CASE WHEN sr.parent_id IS NULL AND NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as count ${baseSQL}`
-  ).get(...allParams);
-
-  // 飛び件数 = 初回報告（parent_id IS NULL）のうち飛びのみ
-  const noshowCond = allConds.length
-    ? `${allConds.join(' AND ')} AND sr.parent_id IS NULL AND ${NOSHOW_CONDITION}`
-    : `sr.parent_id IS NULL AND ${NOSHOW_CONDITION}`;
-  const totalNoshowRow = db.prepare(
-    `SELECT COUNT(*) as count FROM ${dedup} ${joinClause} WHERE ${noshowCond}`
-  ).get(...allParams);
-
-  // 契約数（CV = 営業報告の契約結果のみ）
-  const contractCond = allConds.length
-    ? `${allConds.join(' AND ')} AND ${CONTRACT_CONDITION}`
-    : CONTRACT_CONDITION;
-  const totalContractsRow = db.prepare(
-    `SELECT COUNT(*) as count FROM ${dedup} ${joinClause} WHERE ${contractCond}`
-  ).get(...allParams);
-
-  // クーリングオフ数
-  const coolingoffCond = allConds.length
-    ? `${allConds.join(' AND ')} AND ${COOLINGOFF_CONDITION}`
-    : COOLINGOFF_CONDITION;
-  const totalCoolingoffRow = db.prepare(
-    `SELECT COUNT(*) as count FROM ${dedup} ${joinClause} WHERE ${coolingoffCond}`
-  ).get(...allParams);
+  // 同一人物・同一面接日は、同種指標内では1件として数える。
+  // 別日の飛び→契約→クーリングオフはそれぞれ別イベントとして残る。
+  const totals = db.prepare(`
+    SELECT
+      COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) AS total_interviews,
+      COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) AS total_contracts,
+      COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) AS total_coolingoff,
+      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) AS total_noshow,
+      COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) AS total_ai_recommend,
+      COUNT(DISTINCT CASE WHEN COALESCE(sr.result, '') != '${RESULT_COOLING_OFF}' THEN ${EVENT_KEY} END) AS sales_report_reservations
+    ${baseSQL}
+  `).get(...allParams);
 
   // プラン別契約数
-  const contractBaseSQL = `FROM ${dedup} ${joinClause} WHERE ${contractCond}`;
+  const contractWhere = `${whereClause ? 'AND' : 'WHERE'} ${CONTRACT_CONDITION}`;
   const planBreakdown = db.prepare(`
     SELECT
       COALESCE(NULLIF(TRIM(sr.contract_plan), ''), '未記入') AS plan,
-      COUNT(*) AS count
-    ${contractBaseSQL}
+      COUNT(DISTINCT ${EVENT_KEY}) AS count
+    FROM ${dedup} ${joinClause} ${whereClause} ${contractWhere}
     GROUP BY plan
     ORDER BY count DESC
   `).all(...allParams);
 
-  const totalInterviews = totalInterviewsRow.count || 0;
-  const totalContracts  = totalContractsRow.count;
-  const totalCoolingoff = totalCoolingoffRow.count;
-  const totalNoshow     = totalNoshowRow.count;
+  const totalInterviews = totals.total_interviews || 0;
+  const totalContracts  = totals.total_contracts || 0;
+  const totalCoolingoff = totals.total_coolingoff || 0;
+  const totalNoshow     = totals.total_noshow || 0;
+  const totalAiRecommend = totals.total_ai_recommend || 0;
   const appCount        = parseInt(applicant_count) || 0;
 
   const cvrInterview  = totalInterviews > 0
@@ -406,6 +428,9 @@ router.get('/summary', authenticateToken, (req, res) => {
     total_contracts:  totalContracts,
     total_coolingoff: totalCoolingoff,
     total_noshow:     totalNoshow,
+    total_ai_recommend: totalAiRecommend,
+    sales_report_reservations: totals.sales_report_reservations || 0,
+    adjusted_reservation_count: appCount + totalAiRecommend,
     coolingoff_rate:  coolingoffRate,
     applicant_count:  appCount,
     cvr_interview:    cvrInterview,
@@ -431,10 +456,11 @@ router.get('/all-periods', authenticateToken, (req, res) => {
   const data = db.prepare(`
     SELECT
       ${fmt} as period,
-      SUM(CASE WHEN sr.parent_id IS NULL AND NOT (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_interviews,
-      SUM(CASE WHEN ${CONTRACT_CONDITION}     THEN 1 ELSE 0 END) as total_contracts,
-      SUM(CASE WHEN ${COOLINGOFF_CONDITION}   THEN 1 ELSE 0 END) as total_coolingoff,
-      SUM(CASE WHEN sr.parent_id IS NULL AND (${NOSHOW_CONDITION}) THEN 1 ELSE 0 END) as total_noshow
+      COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) as total_interviews,
+      COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) as total_contracts,
+      COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) as total_coolingoff,
+      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) as total_noshow,
+      COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) as total_ai_recommend
     ${baseSQL}
     GROUP BY period
     HAVING period IS NOT NULL
@@ -448,6 +474,47 @@ router.get('/all-periods', authenticateToken, (req, res) => {
       ? ((d.total_contracts / d.total_interviews) * 100).toFixed(1) : '0.0',
     coolingoff_rate: d.total_contracts > 0
       ? ((d.total_coolingoff / d.total_contracts) * 100).toFixed(1) : '0.0',
+  })));
+});
+
+// ============================================================
+// GET /api/stats/by-interviewer
+//   担当者間の比較用。同日・同一人物・同結果の重複報告は1件として集計。
+// ============================================================
+router.get('/by-interviewer', authenticateToken, (req, res) => {
+  const periodInfo = periodCondition(req.query);
+  if (periodInfo.error) return res.status(400).json({ error: periodInfo.error });
+
+  // 比較画面では担当者自身のフィルターを外し、その他の属性フィルターは引き継ぐ。
+  const comparisonQuery = { ...req.query, interviewer: '' };
+  const { conditions, params } = buildFilterSQL(comparisonQuery);
+  const withJoin = needsNotionJoin(comparisonQuery);
+  const baseSQL = buildBaseSQL(
+    periodInfo.condition,
+    conditions,
+    withJoin,
+    req.query.sheet_type
+  );
+  const allParams = [...periodInfo.params, ...params];
+
+  const data = db.prepare(`
+    SELECT
+      COALESCE(NULLIF(TRIM(sr.interviewer_name), ''), '不明') AS interviewer_name,
+      COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) AS total_interviews,
+      COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) AS total_contracts,
+      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) AS total_noshow,
+      COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) AS total_coolingoff,
+      COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) AS total_ai_recommend
+    ${baseSQL}
+    GROUP BY interviewer_name
+    ORDER BY total_contracts DESC, total_interviews DESC, interviewer_name ASC
+  `).all(...allParams);
+
+  res.json(data.map(row => ({
+    ...row,
+    cvr_interview: row.total_interviews > 0
+      ? ((row.total_contracts / row.total_interviews) * 100).toFixed(1)
+      : '0.0',
   })));
 });
 
@@ -476,8 +543,8 @@ router.get('/interview-date-cvr', authenticateToken, (req, res) => {
     const stCond = buildSheetTypeCondition(req.query.sheet_type);
     const srWhereClause = stCond ? `AND ${stCond.replace(/\bsr\b/g, 'sr2')}` : '';
 
-    // applicant_key = COALESCE(NULLIF(applicant_email,''), applicant_full_name)
-    //   ※ sales_reports のカラム名は applicant_email / applicant_full_name（email/full_name ではない）
+    // メールを最優先で小文字化、メールがない場合のみ氏名を空白除去して照合。
+    // 氏名表記やメール大小文字の違いで集計対象から外れるのを防ぐ。
     const data = db.prepare(`
       SELECT
         ${periodFmt} as period,
@@ -490,7 +557,16 @@ router.get('/interview-date-cvr', authenticateToken, (req, res) => {
           THEN aid.applicant_key END) as total_coolingoff
       FROM applicant_interview_dates aid
       LEFT JOIN sales_reports sr2
-        ON COALESCE(NULLIF(sr2.applicant_email,''), sr2.applicant_full_name) = aid.applicant_key
+        ON (CASE
+              WHEN INSTR(TRIM(aid.applicant_key), '@') > 0
+                THEN 'email:' || LOWER(TRIM(aid.applicant_key))
+              ELSE 'name:' || LOWER(REPLACE(REPLACE(TRIM(aid.applicant_key), ' ', ''), '　', ''))
+            END)
+         = (CASE
+              WHEN NULLIF(TRIM(sr2.applicant_email), '') IS NOT NULL
+                THEN 'email:' || LOWER(TRIM(sr2.applicant_email))
+              ELSE 'name:' || LOWER(REPLACE(REPLACE(TRIM(sr2.applicant_full_name), ' ', ''), '　', ''))
+            END)
         ${srWhereClause}
       WHERE aid.interview_date IS NOT NULL
         AND aid.interview_date != ''

@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 const db = require('../database');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const spreadsheetCache = require('./spreadsheet').cache;
+const { syncCalendarEvents } = require('../services/calendarInterviewSync');
 
 // ============================================================
 // OAuth2クライアント生成
@@ -326,6 +327,7 @@ router.post('/sync', authenticateToken, async (req, res) => {
               description: ev.description || '',
               startDt:     ev.start?.dateTime || ev.start?.date,
               guestName:   extractGuestName(ev.summary, ev.description),
+              guestEmail:  extractEmailFromDescription(ev.description),
               nameSource:  extractNameFromDescription(ev.description) ? 'description' : 'summary',
             });
           }
@@ -346,98 +348,24 @@ router.post('/sync', authenticateToken, async (req, res) => {
       ? spreadsheetCache.data.applicants
       : [];
 
-    // メール→キーのマップ（高速照合用）
-    const emailToKey = new Map();
-    for (const ap of sheetApplicants) {
-      if (ap.email) emailToKey.set(ap.email.toLowerCase().trim(), ap.email.trim());
-    }
-
-    // 既存の面接日レコードキー一覧
-    const allDateKeys = db.prepare(
-      'SELECT applicant_key FROM applicant_interview_dates'
-    ).all().map(r => r.applicant_key);
-
-    const upsert = db.prepare(`
-      INSERT INTO applicant_interview_dates (applicant_key, interview_date, source, updated_at)
-      VALUES (?, ?, 'calendar', CURRENT_TIMESTAMP)
-      ON CONFLICT(applicant_key) DO UPDATE SET
-        interview_date = excluded.interview_date,
-        source         = 'calendar',
-        updated_at     = CURRENT_TIMESTAMP
-    `);
-
-    const matchResults = [];
-
-    for (const ev of allEvents) {
-      if (!ev.startDt) continue;
-      const guestName  = ev.guestName;
-      const guestEmail = extractEmailFromDescription(ev.description);
-
-      let matched = null;
-      let matchMethod = null;
-
-      // ① メールアドレスで照合（最優先・最確実）
-      if (guestEmail) {
-        const key = emailToKey.get(guestEmail.toLowerCase().trim());
-        if (key) { matched = { key }; matchMethod = 'email'; }
-      }
-
-      // ② 氏名で照合（スプレッドシートキャッシュ）
-      if (!matched && guestName) {
-        const normGuest = normalizeName(guestName);
-        for (const ap of sheetApplicants) {
-          if (ap.full_name && normalizeName(ap.full_name) === normGuest) {
-            matched = { key: ap.email?.trim() || ap.full_name };
-            matchMethod = 'name_sheet';
-            break;
-          }
-        }
-      }
-
-      // ③ 既存 applicant_interview_dates キーで照合
-      if (!matched && guestName) {
-        const normGuest = normalizeName(guestName);
-        for (const key of allDateKeys) {
-          if (normalizeName(key) === normGuest) {
-            matched = { key };
-            matchMethod = 'name_existing';
-            break;
-          }
-        }
-      }
-
-      if (!matched) {
-        matchResults.push({
-          guestName: guestName || '(氏名なし)',
-          guestEmail,
-          startDt: ev.startDt,
-          matched: false,
-        });
-        continue;
-      }
-
-      upsert.run(matched.key, ev.startDt.substring(0, 10));
-      matchResults.push({
-        guestName, guestEmail,
-        applicantKey: matched.key,
-        matchMethod,
-        startDt: ev.startDt,
-        interviewDate: ev.startDt.substring(0, 10),
-        matched: true,
-      });
-    }
+    // メールを最優先、氏名は候補が1人の場合のみ照合する。
+    // 同一応募者に複数の異なるカレンダー日付がある場合は、
+    // 予期せぬ未来日で上書きしないよう自動更新を保留する。
+    const { results: matchResults, matchedKeys } = syncCalendarEvents(
+      db,
+      allEvents,
+      sheetApplicants
+    );
 
     const matchedCount = matchResults.filter(r => r.matched).length;
+    const ambiguousCount = matchResults.filter(r => r.ambiguous).length;
+    const protectedCount = matchResults.filter(r => r.protected).length;
 
     // ============================================================
     // カレンダーから消えたイベントの面接日を空白化
     // source='calendar' のレコードのうち、今回のカレンダー取得で
     // 照合された applicant_key に含まれないものは NULL にリセット
     // ============================================================
-    const matchedKeys = new Set(
-      matchResults.filter(r => r.matched).map(r => r.applicantKey)
-    );
-
     // DB上で source='calendar' のレコードを全取得
     const calendarSourcedRows = db.prepare(`
       SELECT applicant_key, interview_date
@@ -462,9 +390,13 @@ router.post('/sync', authenticateToken, async (req, res) => {
     res.json({
       ok: true,
       message: `${allEvents.length}件のイベントを取得、${matchedCount}件を照合しました` +
+        (protectedCount > 0 ? `（手動/報告由来の日付 ${protectedCount}件を保護）` : '') +
+        (ambiguousCount > 0 ? `（曖昧な候補 ${ambiguousCount}件は未更新）` : '') +
         (clearedKeys.length > 0 ? `（キャンセル検出: ${clearedKeys.length}件を空白化）` : ''),
       totalEvents: allEvents.length,
       matched: matchedCount,
+      protected: protectedCount,
+      ambiguous: ambiguousCount,
       cleared: clearedKeys.length,
       results: matchResults,
     });

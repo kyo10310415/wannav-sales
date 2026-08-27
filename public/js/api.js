@@ -184,6 +184,10 @@ const API = {
       const p = new URLSearchParams({ type, ...(params || {}) });
       return API.get(`/stats/interview-date-cvr?${p.toString()}`);
     },
+    byInterviewer: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return API.get(`/stats/by-interviewer${q ? '?' + q : ''}`);
+    },
   },
 
   // Data Analysis

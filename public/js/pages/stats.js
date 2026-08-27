@@ -1,7 +1,11 @@
 // Stats / CVR Page
 const StatsPage = {
-  currentType:   'month', // 'week' or 'month'
+  currentType:   'month', // 'week' | 'month' | 'custom'
   currentPeriod: '',
+  customDateFrom: '',
+  customDateTo: '',
+  currentSummary: null,
+  activeViewTab: 'funnel',
   statsTab:       'as',    // 'as' | 'gh' | 'all' ← シート区分タブ
   // スプレッドシートから取得するファネル数値（表示用のみ）
   applicantCount:      0,
@@ -73,14 +77,22 @@ const StatsPage = {
                 <div class="period-tabs" style="display:inline-flex;gap:4px">
                   <button class="period-tab active" id="tab-month" onclick="StatsPage.switchType('month')">月次</button>
                   <button class="period-tab" id="tab-week" onclick="StatsPage.switchType('week')">週次</button>
+                  <button class="period-tab" id="tab-custom" onclick="StatsPage.switchType('custom')">任意期間</button>
                 </div>
               </div>
-              <div style="display:flex;align-items:center;gap:8px">
+              <div id="standard-period-picker" style="display:flex;align-items:center;gap:8px">
                 <span style="font-size:12px;font-weight:600;color:var(--gray-500)">期間</span>
                 <select id="period-select" class="form-control" style="min-width:160px;width:auto"
                   onchange="StatsPage.onPeriodChange()">
                   ${months.map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
                 </select>
+              </div>
+              <div id="custom-period-picker" style="display:none;align-items:center;gap:8px;flex-wrap:wrap">
+                <span style="font-size:12px;font-weight:600;color:var(--gray-500)">開始日</span>
+                <input type="date" id="stats-date-from" class="form-control" style="width:auto">
+                <span style="font-size:12px;color:var(--gray-400)">〜</span>
+                <span style="font-size:12px;font-weight:600;color:var(--gray-500)">終了日</span>
+                <input type="date" id="stats-date-to" class="form-control" style="width:auto">
               </div>
               <button class="btn btn-primary btn-sm" onclick="StatsPage.applyAndLoad()">
                 <i class="fas fa-sync-alt"></i> 集計
@@ -131,6 +143,11 @@ const StatsPage = {
             onclick="StatsPage.switchViewTab('interview-date')"
             style="padding:8px 20px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;color:var(--gray-500);border-bottom:3px solid transparent;margin-bottom:-2px">
             <i class="fas fa-calendar-check" style="margin-right:5px"></i>面接実施日ベースCVR
+          </button>
+          <button id="view-tab-interviewer" class="view-tab"
+            onclick="StatsPage.switchViewTab('interviewer')"
+            style="padding:8px 20px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;color:var(--gray-500);border-bottom:3px solid transparent;margin-bottom:-2px">
+            <i class="fas fa-users" style="margin-right:5px"></i>担当者別比較
           </button>
         </div>
 
@@ -185,6 +202,19 @@ const StatsPage = {
           </div>
         </div>
 
+        <!-- 担当者別比較ビュー -->
+        <div id="view-interviewer" style="display:none">
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-body" style="padding:14px 16px;font-size:13px;color:var(--gray-600)">
+              <i class="fas fa-info-circle" style="color:#3b82f6;margin-right:6px"></i>
+              選択期間内の面接数・契約数・飛び数・AIレコメン案内数とCV率を担当者ごとに比較します。
+            </div>
+          </div>
+          <div id="interviewer-stats-wrap">
+            <div class="loading-spinner"><div class="spinner"></div><span>集計中...</span></div>
+          </div>
+        </div>
+
       </div>
     `;
   },
@@ -195,16 +225,18 @@ const StatsPage = {
   async mount() {
     const select = document.getElementById('period-select');
     if (select) this.currentPeriod = select.value;
+    const today = dayjs();
+    this.customDateFrom = today.startOf('month').format('YYYY-MM-DD');
+    this.customDateTo = today.format('YYYY-MM-DD');
+    const fromEl = document.getElementById('stats-date-from');
+    const toEl = document.getElementById('stats-date-to');
+    if (fromEl) fromEl.value = this.customDateFrom;
+    if (toEl) toEl.value = this.customDateTo;
     // シート区分タブのスタイルを初期化
     this._applyStatsTabStyle();
     // フィルター選択肢を非同期取得・描画
     this._loadFilterOptions();
-    // fetchApplicantCount・loadCurrentPeriod・loadAllPeriods を並列実行してロード時間を短縮
-    await Promise.all([
-      this.fetchApplicantCount(),
-      this.loadCurrentPeriod(),
-      this.loadAllPeriods(),
-    ]);
+    await this.applyAndLoad(false);
   },
 
   // ============================================================
@@ -223,11 +255,7 @@ const StatsPage = {
       this.loadInterviewDateCvr();
     }
     // 全集計再実行
-    Promise.all([
-      this.fetchApplicantCount(),
-      this.loadCurrentPeriod(),
-      this.loadAllPeriods(),
-    ]);
+    this.applyAndLoad(false);
   },
 
   _applyStatsTabStyle() {
@@ -368,13 +396,13 @@ const StatsPage = {
   },
 
   // フィルター読み取り → 集計実行
-  async applyAndLoad() {
-    this._readFilters();
-    await Promise.all([
-      this.fetchApplicantCount(),
-      this.loadCurrentPeriod(),
-      this.loadAllPeriods(),
-    ]);
+  async applyAndLoad(readFilters = true) {
+    if (readFilters) this._readFilters();
+    if (!this._readCustomRange()) return;
+    await this.fetchApplicantCount();
+    await this.loadCurrentPeriod();
+    await this.loadAllPeriods();
+    if (this.activeViewTab === 'interviewer') await this.loadByInterviewer();
   },
 
   // ============================================================
@@ -385,8 +413,7 @@ const StatsPage = {
     this.loadingApplicantCount = true;
     try {
       const data = await API.spreadsheet.applicantsCount({
-        period: this.currentType,
-        value:  this.currentPeriod,
+        ...this._currentPeriodParams(),
         ...this._sheetParam(),
       });
       this.applicantCount     = data.count                || 0;
@@ -407,31 +434,44 @@ const StatsPage = {
     this.currentType = type;
     document.getElementById('tab-month').classList.toggle('active', type === 'month');
     document.getElementById('tab-week').classList.toggle('active',  type === 'week');
+    document.getElementById('tab-custom').classList.toggle('active', type === 'custom');
+
+    const standardPicker = document.getElementById('standard-period-picker');
+    const customPicker = document.getElementById('custom-period-picker');
+    if (standardPicker) standardPicker.style.display = type === 'custom' ? 'none' : 'flex';
+    if (customPicker) customPicker.style.display = type === 'custom' ? 'flex' : 'none';
+
+    if (type === 'custom') {
+      this.currentPeriod = 'custom';
+      this.applyAndLoad(false);
+      return;
+    }
 
     const select  = document.getElementById('period-select');
     const options = type === 'month' ? Utils.getRecentMonths(12) : Utils.getRecentWeeks(24);
     select.innerHTML = options.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
     this.currentPeriod = options[0]?.value || '';
 
-    this.fetchApplicantCount().then(() => this.loadCurrentPeriod());
-    this.loadAllPeriods();
+    this.applyAndLoad(false);
   },
 
   async onPeriodChange() {
     this.currentPeriod = document.getElementById('period-select').value;
-    await this.fetchApplicantCount();
-    await this.loadCurrentPeriod();
+    await this.applyAndLoad(false);
   },
 
   switchViewTab(tab) {
     const isFunnel       = tab === 'funnel';
     const isCvr          = tab === 'cvr';
     const isInterviewDate = tab === 'interview-date';
+    const isInterviewer = tab === 'interviewer';
+    this.activeViewTab = tab;
     document.getElementById('view-funnel').style.display         = isFunnel        ? 'block' : 'none';
     document.getElementById('view-cvr').style.display            = isCvr           ? 'block' : 'none';
     document.getElementById('view-interview-date').style.display = isInterviewDate ? 'block' : 'none';
+    document.getElementById('view-interviewer').style.display    = isInterviewer    ? 'block' : 'none';
 
-    const tabIds = ['funnel', 'cvr', 'interview-date'];
+    const tabIds = ['funnel', 'cvr', 'interview-date', 'interviewer'];
     tabIds.forEach(id => {
       const btn = document.getElementById(`view-tab-${id}`);
       if (!btn) return;
@@ -445,6 +485,7 @@ const StatsPage = {
       this._interviewDateCvrLoaded = true;
       this.loadInterviewDateCvr();
     }
+    if (isInterviewer) this.loadByInterviewer();
   },
 
   // ============================================================
@@ -452,7 +493,7 @@ const StatsPage = {
   // ============================================================
   async loadCurrentPeriod() {
     const periodSelect = document.getElementById('period-select');
-    if (periodSelect) this.currentPeriod = periodSelect.value;
+    if (periodSelect && this.currentType !== 'custom') this.currentPeriod = periodSelect.value;
 
     this.renderFunnelCards();
 
@@ -463,16 +504,15 @@ const StatsPage = {
     try {
       const filterParams = this._activeFilterParams();
       const data = await API.stats.summary({
-        period:          this.currentType,
-        value:           this.currentPeriod,
+        ...this._currentPeriodParams(),
         applicant_count: this.applicantCount,
         ...filterParams,
         ...this._sheetTypeParam(),
       });
+      this.currentSummary = data;
+      this.renderFunnelCards();
 
-      const periodLabel = this.currentType === 'month'
-        ? this.formatMonthLabel(this.currentPeriod)
-        : this.formatWeekLabel(this.currentPeriod);
+      const periodLabel = this._periodLabel();
 
       const filterNote = this._filterNote();
 
@@ -499,7 +539,7 @@ const StatsPage = {
                 面接実施数: <strong>${data.total_interviews}件</strong>
                 <span style="font-size:10px;color:var(--gray-400);margin-left:4px">（営業報告件数）</span>
               </span>
-              <span><i class="fas fa-handshake" style="margin-right:4px;color:var(--success)"></i>契約数（営業報告）: <strong>${data.total_contracts}件</strong></span>
+                <span><i class="fas fa-handshake" style="margin-right:4px;color:var(--success)"></i>契約数（営業報告）: <strong>${data.total_contracts}件</strong></span>
             </div>
           </div>
 
@@ -533,6 +573,18 @@ const StatsPage = {
             </div>
           </div>
 
+          <!-- AIレコメン -->
+          <div class="cvr-card" style="border-top:4px solid #8b5cf6">
+            <div class="cvr-label">
+              <span style="background:#8b5cf6;color:white;border-radius:4px;padding:1px 8px;font-size:10px">AI</span>
+              AIレコメン案内数
+            </div>
+            <div class="cvr-value" style="color:#7c3aed">${data.total_ai_recommend || 0}<span>件</span></div>
+            <div class="cvr-breakdown">
+              <span>予約者数には加算、面接実施数には加算しません</span>
+            </div>
+          </div>
+
         </div>
 
         <!-- サマリーカード -->
@@ -543,6 +595,7 @@ const StatsPage = {
                 { label:'面接実施数', val:data.total_interviews, color:'var(--primary)',  sub: '営業報告件数' },
                 { label:'契約数（CV）', val:data.total_contracts,  color:'var(--success)',  sub: '営業報告の契約結果' },
                 { label:'クーリングオフ', val:data.total_coolingoff, color:'#f59e0b',          sub: '営業報告の結果' },
+                { label:'AIレコメン', val:data.total_ai_recommend || 0, color:'#7c3aed', sub: '予約+面接実施対象外' },
                 { label:'応募数',   val:data.applicant_count,   color:'var(--secondary)', sub: '期間・重複除外' },
               ].map(c => `
                 <div style="flex:1;min-width:130px;background:var(--gray-50);border-radius:8px;padding:10px 14px;border-left:3px solid ${c.color}">
@@ -568,15 +621,14 @@ const StatsPage = {
     const el = document.getElementById('funnel-cards');
     if (!el) return;
 
-    const periodLabel = this.currentType === 'month'
-      ? this.formatMonthLabel(this.currentPeriod)
-      : this.formatWeekLabel(this.currentPeriod);
+    const periodLabel = this._periodLabel();
 
     const apply = this.applicantCount;
     const doc   = this.docPassCount;
-    const resv  = this.interviewResvCount;
+    const aiRecommend = this.currentSummary?.total_ai_recommend || 0;
+    const resv  = this.interviewResvCount + aiRecommend;
     // 面接実施数: this.allPeriods（営業報告ベース）から選択期間の total_interviews を取得
-    const periodRow = this.allPeriods.find(d => d.period === this.currentPeriod);
+    const periodRow = this.currentSummary || this.allPeriods.find(d => d.period === this.currentPeriod);
     const intv      = periodRow ? (periodRow.total_interviews || 0) : 0;
     const noshow    = periodRow ? (periodRow.total_noshow    || 0) : 0;
     const filterNote = this._filterNote();
@@ -646,6 +698,19 @@ const StatsPage = {
         </div>
       </div>
 
+      <div style="margin-bottom:16px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="width:32px;height:32px;background:#8b5cf6;border-radius:8px;display:flex;align-items:center;justify-content:center">
+          <i class="fas fa-robot" style="color:white;font-size:14px"></i>
+        </div>
+        <span style="font-size:12px;font-weight:700;color:#6d28d9">AIレコメン案内数</span>
+        <div style="font-size:28px;font-weight:800;color:#7c3aed;line-height:1">
+          ${aiRecommend.toLocaleString()}<span style="font-size:13px;font-weight:500">件</span>
+        </div>
+        <div style="font-size:11px;color:#5b21b6;flex:1;min-width:180px">
+          予約者数に含め、面接実施数からは除外しています。
+        </div>
+      </div>
+
       <div style="background:linear-gradient(135deg,#1e40af,#7c3aed);border-radius:10px;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div>
           <div style="color:rgba(255,255,255,0.8);font-size:12px;margin-bottom:2px">
@@ -673,6 +738,14 @@ const StatsPage = {
     if (fwrap) fwrap.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><span>読み込み中...</span></div>`;
 
     try {
+      if (this.currentType === 'custom') {
+        const data = this.currentSummary ? [{ ...this.currentSummary, period: 'custom' }] : [];
+        this.allPeriods = data;
+        this.renderPeriodsTable(data);
+        this.renderFunnelCards();
+        await this.renderFunnelTable();
+        return;
+      }
       const filterParams = this._activeFilterParams();
       const data = await API.stats.allPeriods(this.currentType, {
         ...filterParams,
@@ -696,6 +769,33 @@ const StatsPage = {
   async renderFunnelTable() {
     const wrap = document.getElementById('funnel-table-wrap');
     if (!wrap) return;
+
+    if (this.currentType === 'custom') {
+      const summary = this.currentSummary || {};
+      const ai = summary.total_ai_recommend || 0;
+      const reservation = this.interviewResvCount + ai;
+      const pct = (num, base) => base > 0 ? `${((num / base) * 100).toFixed(1)}%` : '—';
+      wrap.innerHTML = `
+        <div style="overflow-x:auto">
+          <table style="width:100%">
+            <thead><tr>
+              <th>期間</th><th>応募</th><th>書類通過</th><th>面接予約</th>
+              <th>AIレコメン</th><th>面接実施</th><th>飛び</th><th>予約→実施</th>
+            </tr></thead>
+            <tbody><tr>
+              <td><strong>${Utils.escHtml(this._periodLabel())}</strong></td>
+              <td>${this.applicantCount}</td><td>${this.docPassCount}</td><td>${reservation}</td>
+              <td style="color:#7c3aed;font-weight:700">${ai}</td>
+              <td>${summary.total_interviews || 0}</td><td>${summary.total_noshow || 0}</td>
+              <td>${pct(summary.total_interviews || 0, reservation)}</td>
+            </tr></tbody>
+          </table>
+        </div>
+        <div style="padding:10px 16px;font-size:11px;color:var(--gray-400)">
+          応募・書類通過は応募日、面接実施・飛び・AIレコメンは営業報告の面接日で任意期間を判定しています。
+        </div>`;
+      return;
+    }
 
     const periods = this.currentType === 'month'
       ? Utils.getRecentMonths(12)
@@ -742,6 +842,7 @@ const StatsPage = {
         salesMap[d.period] = {
           intv:   d.total_interviews || 0,
           noshow: d.total_noshow     || 0,
+          ai:     d.total_ai_recommend || 0,
         };
       });
 
@@ -773,8 +874,8 @@ const StatsPage = {
                 const isCurrent = r.period === this.currentPeriod;
                 const apply  = r.count || 0;
                 const doc    = r.doc_pass_count || 0;
-                const resv   = r.interview_resv_count || 0;
-                const sm     = salesMap[r.period] || { intv: 0, noshow: 0 };
+                const sm     = salesMap[r.period] || { intv: 0, noshow: 0, ai: 0 };
+                const resv   = (r.interview_resv_count || 0) + sm.ai;
                 const intv   = sm.intv;
                 const noshow = sm.noshow;
                 return `
@@ -798,7 +899,7 @@ const StatsPage = {
         </div>
         <div style="padding:10px 16px;font-size:11px;color:var(--gray-400);border-top:1px solid var(--gray-100)">
           <i class="fas fa-info-circle" style="margin-right:4px"></i>
-          直近6期間を表示。応募・書類通過・面接予約はスプレッドシート。面接実施は営業報告件数（飛び除外）。飛びは営業報告の結果］飛び＾の件数。率は前ステップ比。
+          直近6期間を表示。応募・書類通過・面接予約はスプレッドシート。面接実施は営業報告件数（飛び除外）。飛びは営業報告の結果「飛び」の件数。率は前ステップ比。
         </div>`;
     } catch (err) {
       wrap.innerHTML = `<div class="alert alert-error" style="margin:16px"><i class="fas fa-exclamation-circle"></i><span>${err.message}</span></div>`;
@@ -828,6 +929,7 @@ const StatsPage = {
               <th>面接実施数</th>
               <th>契約数</th>
               <th>CVR① (面接比)</th>
+              <th>AIレコメン</th>
               <th>クーリングオフ</th>
               <th>CO率（契約後）</th>
               <th style="min-width:120px">CVR進捗</th>
@@ -838,9 +940,11 @@ const StatsPage = {
               const cvr       = parseFloat(d.cvr_interview)   || 0;
               const coRate    = parseFloat(d.coolingoff_rate)  || 0;
               const barWidth  = maxCvr > 0 ? (cvr / maxCvr * 100).toFixed(0) : 0;
-              const label     = this.currentType === 'month'
-                ? this.formatMonthLabel(d.period)
-                : this.formatWeekLabel(d.period);
+              const label     = this.currentType === 'custom'
+                ? this._periodLabel()
+                : (this.currentType === 'month'
+                  ? this.formatMonthLabel(d.period)
+                  : this.formatWeekLabel(d.period));
               const isCurrent = d.period === this.currentPeriod;
               return `
                 <tr style="${isCurrent ? 'background:#eff6ff' : ''}">
@@ -851,6 +955,7 @@ const StatsPage = {
                   <td>${d.total_interviews}件</td>
                   <td><span class="badge badge-contract">${d.total_contracts}件</span></td>
                   <td><strong style="color:var(--primary)">${cvr}%</strong></td>
+                  <td style="color:#7c3aed;font-weight:600">${d.total_ai_recommend || 0}件</td>
                   <td style="color:#d97706;font-weight:600">${d.total_coolingoff ?? 0}件</td>
                   <td>
                     ${coRate > 0
@@ -938,9 +1043,94 @@ const StatsPage = {
       </div>`;
   },
 
+  async loadByInterviewer() {
+    const wrap = document.getElementById('interviewer-stats-wrap');
+    if (!wrap) return;
+    if (!this._readCustomRange()) return;
+    wrap.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><span>担当者別に集計中...</span></div>`;
+
+    try {
+      const data = await API.stats.byInterviewer({
+        ...this._currentPeriodParams(),
+        ...this._activeFilterParams(),
+        ...this._sheetTypeParam(),
+      });
+      if (!data.length) {
+        wrap.innerHTML = `<div class="empty-state"><i class="fas fa-users"></i><h3>対象データがありません</h3></div>`;
+        return;
+      }
+
+      const maxContracts = Math.max(...data.map(row => row.total_contracts || 0), 1);
+      wrap.innerHTML = `
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-users" style="margin-right:8px;color:#2563eb"></i>担当者別実績 — ${Utils.escHtml(this._periodLabel())}</div>
+          </div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
+            <table style="width:100%;min-width:760px">
+              <thead><tr>
+                <th>担当者</th><th>面接数</th><th>契約数</th><th>飛び数</th>
+                <th>AIレコメン</th><th>CV率</th><th style="min-width:150px">契約数比較</th>
+              </tr></thead>
+              <tbody>
+                ${data.map(row => {
+                  const width = Math.round((row.total_contracts || 0) / maxContracts * 100);
+                  return `<tr>
+                    <td><strong>${Utils.escHtml(row.interviewer_name || '不明')}</strong></td>
+                    <td>${row.total_interviews || 0}件</td>
+                    <td><span class="badge badge-contract">${row.total_contracts || 0}件</span></td>
+                    <td style="color:#dc2626;font-weight:600">${row.total_noshow || 0}件</td>
+                    <td style="color:#7c3aed;font-weight:600">${row.total_ai_recommend || 0}件</td>
+                    <td><strong style="color:var(--primary)">${row.cvr_interview || '0.0'}%</strong></td>
+                    <td><div style="height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden"><div style="height:100%;width:${width}%;background:#22c55e"></div></div></td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    } catch (error) {
+      wrap.innerHTML = `<div class="alert alert-error"><i class="fas fa-exclamation-circle"></i><span>${Utils.escHtml(error.message)}</span></div>`;
+    }
+  },
+
   // ============================================================
   // ユーティリティ
   // ============================================================
+  _readCustomRange() {
+    if (this.currentType !== 'custom') return true;
+    const from = document.getElementById('stats-date-from')?.value || this.customDateFrom;
+    const to = document.getElementById('stats-date-to')?.value || this.customDateTo;
+    if (!from || !to || from > to) {
+      Utils.notify('開始日と終了日を正しい順序で指定してください', 'error');
+      return false;
+    }
+    this.customDateFrom = from;
+    this.customDateTo = to;
+    this.currentPeriod = 'custom';
+    return true;
+  },
+
+  _currentPeriodParams() {
+    if (this.currentType === 'custom') {
+      return {
+        period: 'custom',
+        date_from: this.customDateFrom,
+        date_to: this.customDateTo,
+      };
+    }
+    return { period: this.currentType, value: this.currentPeriod };
+  },
+
+  _periodLabel() {
+    if (this.currentType === 'custom') {
+      return `${this.customDateFrom} 〜 ${this.customDateTo}`;
+    }
+    return this.currentType === 'month'
+      ? this.formatMonthLabel(this.currentPeriod)
+      : this.formatWeekLabel(this.currentPeriod);
+  },
+
   _activeFilterParams() {
     const params = {};
     if (this.filters.interviewer)              params.interviewer              = this.filters.interviewer;

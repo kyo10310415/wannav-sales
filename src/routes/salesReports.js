@@ -2,6 +2,17 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database');
 const { authenticateToken } = require('../middleware/auth');
+const {
+  syncInterviewDateFromReport,
+  reconcileInterviewDateAfterDelete,
+} = require('../services/interviewDateService');
+const {
+  CONTRACT_RESULTS,
+  RESULT_NOSHOW,
+  RESULT_AI_RECOMMEND,
+  sqlEventKey,
+  sqlMetricDate,
+} = require('../services/reportMetrics');
 
 // GET /api/sales-reports - 営業報告一覧
 router.get('/', authenticateToken, (req, res) => {
@@ -92,6 +103,8 @@ router.post('/', authenticateToken, (req, res) => {
     );
 
     const report = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(result_db.lastInsertRowid);
+    // 応募者側の面接日が未登録の場合のみ、営業報告の面接日で補完する。
+    syncInterviewDateFromReport(db, report);
     res.status(201).json(report);
   } catch (err) {
     res.status(500).json({ error: '営業報告の保存に失敗しました: ' + err.message });
@@ -168,6 +181,7 @@ router.put('/:id', authenticateToken, (req, res) => {
     );
 
     const newReport = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(result_db.lastInsertRowid);
+    syncInterviewDateFromReport(db, newReport);
     res.json(newReport);
   } catch (err) {
     return res.status(500).json({ error: '営業報告の追記に失敗しました: ' + err.message });
@@ -224,7 +238,8 @@ router.patch('/:id', authenticateToken, (req, res) => {
         details           = ?,
         applicant_name_email = ?,
         ep_proposal       = ?,
-        sheet_type        = ?
+        sheet_type        = ?,
+        updated_at        = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       interviewer_id    ?? original.interviewer_id,
@@ -255,6 +270,9 @@ router.patch('/:id', authenticateToken, (req, res) => {
     );
 
     const updated = db.prepare('SELECT * FROM sales_reports WHERE id = ?').get(id);
+    // この報告由来で自動補完された面接日のみ編集後の日付へ追従させる。
+    // manual / calendar で既に確定した日付は上書きしない。
+    syncInterviewDateFromReport(db, updated, original.interview_date);
     res.json(updated);
   } catch (err) {
     return res.status(500).json({ error: '営業報告の更新に失敗しました: ' + err.message });
@@ -270,18 +288,43 @@ router.delete('/:id', authenticateToken, (req, res) => {
     return res.status(404).json({ error: '営業報告が見つかりません' });
   }
 
-  db.prepare('DELETE FROM sales_reports WHERE id = ?').run(id);
+  const removeReport = db.transaction(() => {
+    // 初回報告を削除する場合は、最も古い追記を新しいルートに昇格させる。
+    // 履歴チェーンに存在しない parent_id を残さないための処理。
+    if (report.parent_id == null) {
+      const children = db.prepare(`
+        SELECT id FROM sales_reports WHERE parent_id = ? ORDER BY id ASC
+      `).all(id);
+      if (children.length > 0) {
+        const promotedId = children[0].id;
+        db.prepare('UPDATE sales_reports SET parent_id = NULL WHERE id = ?').run(promotedId);
+        db.prepare('UPDATE sales_reports SET parent_id = ? WHERE parent_id = ? AND id != ?')
+          .run(promotedId, id, promotedId);
+      }
+    }
+
+    db.prepare('DELETE FROM sales_reports WHERE id = ?').run(id);
+    reconcileInterviewDateAfterDelete(db, report);
+  });
+  removeReport();
   res.json({ message: '削除しました' });
 });
 
 // ============================================================
 // 契約判定・重複除外（stats.js と共通ロジック）
 // ============================================================
-const SR_CONTRACT_CONDITION = `result IN ('契約', '契約＆職業案内', '契約＆職業案内（CP）')`;
+const SR_CONTRACT_CONDITION = `sr.result IN (${CONTRACT_RESULTS.map(result => `'${result}'`).join(', ')})`;
 // 氏名+メールアドレスの複合キーで重複除外（同姓同名対応）
 // applicant_name_email が NULL の旧レコードは applicant_full_name にフォールバック
 // 全件集計（追記報告も含む全行を対象）
-const SR_DEDUP_SUBQUERY = `sales_reports AS sr`;
+const SR_DEDUP_SUBQUERY = `(
+  SELECT sr.*, COALESCE(root.created_at, sr.created_at) AS first_created_at
+  FROM sales_reports sr
+  LEFT JOIN sales_reports root ON root.id = sr.parent_id
+) AS sr`;
+const SR_EVENT_KEY = sqlEventKey('sr');
+const SR_METRIC_DATE = sqlMetricDate('sr');
+const SR_INTERVIEW_CONDITION = `sr.result != '${RESULT_NOSHOW}' AND sr.result != '${RESULT_AI_RECOMMEND}'`;
 
 // 氏名・メールアドレスを正規化して複合キーを生成するヘルパー
 function makeNameEmailKey(fullName, email) {
@@ -298,17 +341,18 @@ router.get('/stats/cvr', authenticateToken, (req, res) => {
   let params = [];
 
   if (period === 'week' && value) {
-    dateFilter = "WHERE strftime('%Y-W%W', created_at) = ?";
+    dateFilter = `WHERE strftime('%Y-W%W', ${SR_METRIC_DATE}) = ?`;
     params = [value];
   } else if (period === 'month' && value) {
-    dateFilter = "WHERE strftime('%Y-%m', created_at) = ?";
+    dateFilter = `WHERE strftime('%Y-%m', ${SR_METRIC_DATE}) = ?`;
     params = [value];
   }
 
   const dedupBase = `FROM ${SR_DEDUP_SUBQUERY}`;
 
   const totalInterviews = db.prepare(`
-    SELECT COUNT(*) as count ${dedupBase} WHERE sr.parent_id IS NULL ${dateFilter ? 'AND ' + dateFilter.replace(/^WHERE\s+/i,'') : ''}
+    SELECT COUNT(DISTINCT CASE WHEN ${SR_INTERVIEW_CONDITION} THEN ${SR_EVENT_KEY} END) as count
+    ${dedupBase} ${dateFilter}
   `).get(...params);
 
   const contractFilter = dateFilter
@@ -316,7 +360,7 @@ router.get('/stats/cvr', authenticateToken, (req, res) => {
     : `${dedupBase} WHERE ${SR_CONTRACT_CONDITION}`;
 
   const totalContracts = db.prepare(`
-    SELECT COUNT(*) as count ${contractFilter}
+    SELECT COUNT(DISTINCT ${SR_EVENT_KEY}) as count ${contractFilter}
   `).get(...params);
 
   res.json({
@@ -332,9 +376,9 @@ router.get('/stats/cvr', authenticateToken, (req, res) => {
 router.get('/stats/weekly', authenticateToken, (req, res) => {
   const weeks = db.prepare(`
     SELECT
-      strftime('%Y-W%W', created_at) as week,
-      COUNT(CASE WHEN parent_id IS NULL THEN 1 END) as total_interviews,
-      SUM(CASE WHEN ${SR_CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
+      strftime('%Y-W%W', ${SR_METRIC_DATE}) as week,
+      COUNT(DISTINCT CASE WHEN ${SR_INTERVIEW_CONDITION} THEN ${SR_EVENT_KEY} END) as total_interviews,
+      COUNT(DISTINCT CASE WHEN ${SR_CONTRACT_CONDITION} THEN ${SR_EVENT_KEY} END) as total_contracts
     FROM ${SR_DEDUP_SUBQUERY}
     GROUP BY week
     ORDER BY week DESC
@@ -347,9 +391,9 @@ router.get('/stats/weekly', authenticateToken, (req, res) => {
 router.get('/stats/monthly', authenticateToken, (req, res) => {
   const months = db.prepare(`
     SELECT
-      strftime('%Y-%m', created_at) as month,
-      COUNT(CASE WHEN parent_id IS NULL THEN 1 END) as total_interviews,
-      SUM(CASE WHEN ${SR_CONTRACT_CONDITION} THEN 1 ELSE 0 END) as total_contracts
+      strftime('%Y-%m', ${SR_METRIC_DATE}) as month,
+      COUNT(DISTINCT CASE WHEN ${SR_INTERVIEW_CONDITION} THEN ${SR_EVENT_KEY} END) as total_interviews,
+      COUNT(DISTINCT CASE WHEN ${SR_CONTRACT_CONDITION} THEN ${SR_EVENT_KEY} END) as total_contracts
     FROM ${SR_DEDUP_SUBQUERY}
     GROUP BY month
     ORDER BY month DESC
