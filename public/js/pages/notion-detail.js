@@ -244,7 +244,7 @@ const NotionDetailPage = {
           <td style="text-align:center;padding:4px 6px">
             <button class="btn btn-xs"
               style="font-size:10px;padding:3px 8px;background:#1e1e1e;color:white;border:none;border-radius:5px;cursor:pointer"
-              onclick="NotionDetailPage.openModal(${JSON.stringify(p.student_number).replace(/"/g, '&quot;')})">
+              onclick="NotionDetailPage.openModal(${Number(p.id)})">
               <i class="fas fa-expand-alt"></i> 詳細
             </button>
           </td>
@@ -306,11 +306,13 @@ const NotionDetailPage = {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   },
 
-  openModal(studentNumber) {
-    const p = this.profiles.find(x => x.student_number === studentNumber);
+  openModal(profileId) {
+    const p = this.profiles.find(x => Number(x.id) === Number(profileId));
     if (!p) return;
 
-    document.getElementById('nd-modal-title').textContent = `詳細データ — 学籍番号: ${p.student_number}`;
+    document.getElementById('nd-modal-title').textContent = p.student_number
+      ? `詳細データ — 学籍番号: ${p.student_number}`
+      : '詳細データ — 学籍番号未設定';
 
     const rows = this.PROPS.map(prop => {
       const val = p[prop.key];

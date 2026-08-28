@@ -287,12 +287,12 @@ function initializeDatabase() {
   }
 
   // Notionから取得した応募者詳細プロファイルテーブル
-  // student_number をキーとして各プロパティを保存
+  // 学籍番号がないページも notion_page_id をキーに保存する
   db.exec(`
     CREATE TABLE IF NOT EXISTS notion_profiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      student_number TEXT UNIQUE NOT NULL,
-      notion_page_id TEXT,
+      student_number TEXT UNIQUE,
+      notion_page_id TEXT UNIQUE,
       gender TEXT,
       birth_date TEXT,
       final_education TEXT,
@@ -321,6 +321,8 @@ function initializeDatabase() {
       desired_streaming TEXT,
       vtuber_passion TEXT,
       medical_history TEXT,
+      status TEXT,
+      contract_plan TEXT,
       raw_json TEXT,
       synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -335,6 +337,81 @@ function initializeDatabase() {
   if (!npCols.includes('contract_plan')) {
     db.exec('ALTER TABLE notion_profiles ADD COLUMN contract_plan TEXT');
     console.log('Migration: notion_profiles.contract_plan column added');
+  }
+
+  // 旧テーブルは student_number が NOT NULL のため、学籍番号なしの
+  // Notionページを保存できない。既存データを維持したまま制約を移行する。
+  const notionTableInfo = db.prepare('PRAGMA table_info(notion_profiles)').all();
+  const studentNumberCol = notionTableInfo.find(c => c.name === 'student_number');
+  if (studentNumberCol?.notnull === 1) {
+    db.transaction(() => {
+      db.exec('DROP TABLE IF EXISTS notion_profiles_v2');
+      db.exec(`
+        CREATE TABLE notion_profiles_v2 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          student_number TEXT UNIQUE,
+          notion_page_id TEXT UNIQUE,
+          gender TEXT,
+          birth_date TEXT,
+          final_education TEXT,
+          current_job TEXT,
+          job_type TEXT,
+          monthly_income TEXT,
+          disposable_income TEXT,
+          savings TEXT,
+          debt TEXT,
+          has_card TEXT,
+          work_history TEXT,
+          part_time_history TEXT,
+          prefecture TEXT,
+          cohabitants TEXT,
+          has_partner TEXT,
+          partner_understanding TEXT,
+          sales_classification TEXT,
+          has_streaming_experience TEXT,
+          streaming_history TEXT,
+          streaming_equipment TEXT,
+          motivation TEXT,
+          company_reason TEXT,
+          contribution TEXT,
+          vtuber_effort TEXT,
+          other_auditions TEXT,
+          desired_streaming TEXT,
+          vtuber_passion TEXT,
+          medical_history TEXT,
+          status TEXT,
+          contract_plan TEXT,
+          raw_json TEXT,
+          synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        INSERT OR REPLACE INTO notion_profiles_v2 (
+          id, student_number, notion_page_id, gender, birth_date, final_education,
+          current_job, job_type, monthly_income, disposable_income, savings, debt,
+          has_card, work_history, part_time_history, prefecture, cohabitants,
+          has_partner, partner_understanding, sales_classification,
+          has_streaming_experience, streaming_history, streaming_equipment,
+          motivation, company_reason, contribution, vtuber_effort,
+          other_auditions, desired_streaming, vtuber_passion, medical_history,
+          status, contract_plan, raw_json, synced_at
+        )
+        SELECT
+          id, student_number, notion_page_id, gender, birth_date, final_education,
+          current_job, job_type, monthly_income, disposable_income, savings, debt,
+          has_card, work_history, part_time_history, prefecture, cohabitants,
+          has_partner, partner_understanding, sales_classification,
+          has_streaming_experience, streaming_history, streaming_equipment,
+          motivation, company_reason, contribution, vtuber_effort,
+          other_auditions, desired_streaming, vtuber_passion, medical_history,
+          status, contract_plan, raw_json, synced_at
+        FROM notion_profiles
+        ORDER BY id ASC;
+
+        DROP TABLE notion_profiles;
+        ALTER TABLE notion_profiles_v2 RENAME TO notion_profiles;
+      `);
+    })();
+    console.log('Migration: notion_profiles now supports profiles without student_number');
   }
 
   // Check if admin user exists

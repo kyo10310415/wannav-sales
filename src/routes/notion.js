@@ -121,6 +121,12 @@ async function syncNotionProfiles() {
   // 学籍番号プロパティ名の候補（どちらかに存在する）
   const STUDENT_NUM_KEYS = ['学籍番号', '学籍番号 '];
 
+  const removeDuplicateStudentNumber = db.prepare(`
+    DELETE FROM notion_profiles
+    WHERE student_number = ?
+      AND (notion_page_id IS NULL OR notion_page_id <> ?)
+  `);
+
   const upsert = db.prepare(`
     INSERT INTO notion_profiles
       (student_number, notion_page_id, gender, birth_date, final_education,
@@ -140,8 +146,8 @@ async function syncNotionProfiles() {
        @streaming_equipment, @motivation, @company_reason, @contribution,
        @vtuber_effort, @other_auditions, @desired_streaming, @vtuber_passion,
        @medical_history, @status, @contract_plan, @raw_json, @synced_at)
-    ON CONFLICT(student_number) DO UPDATE SET
-      notion_page_id           = excluded.notion_page_id,
+    ON CONFLICT(notion_page_id) DO UPDATE SET
+      student_number           = excluded.student_number,
       gender                   = excluded.gender,
       birth_date               = excluded.birth_date,
       final_education          = excluded.final_education,
@@ -185,10 +191,10 @@ async function syncNotionProfiles() {
         const val = extractPropValue(page.properties[key]);
         if (val && val.trim()) { studentNum = val.trim(); break; }
       }
-      if (!studentNum) continue; // 学籍番号なしはスキップ
-
       const record = mapPageToRecord(page);
       record.student_number = studentNum;
+      // 学籍番号が別ページへ移動した場合も一意制約に抵触させず、最新ページを採用する。
+      if (studentNum) removeDuplicateStudentNumber.run(studentNum, record.notion_page_id);
       upsert.run(record);
       saved++;
     }
