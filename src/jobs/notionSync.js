@@ -11,7 +11,7 @@
  *   notionSync.runOnce(); // 任意タイミングで1回だけ実行
  */
 
-const { syncNotionProfiles } = require('../routes/notion');
+const { runNotionProfilesSync } = require('../routes/notion');
 
 const INTERVAL_MS = 24 * 60 * 60 * 1000; // 24時間
 
@@ -28,7 +28,11 @@ async function runOnce() {
   state.running = true;
   state.lastError = null;
   try {
-    const result = await syncNotionProfiles();
+    const result = await runNotionProfilesSync();
+    if (result.alreadyRunning) {
+      console.log('[notionSync] 別の同期が実行中のためスキップ');
+      return;
+    }
     state.lastResult = result;
     state.lastRunAt  = new Date();
     console.log(`[notionSync] 完了: ${result.saved}件保存`);

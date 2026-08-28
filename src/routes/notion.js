@@ -4,6 +4,26 @@ const router  = express.Router();
 const db      = require('../database');
 const { authenticateToken } = require('../middleware/auth');
 
+// 一覧・CSVで必要な列だけを返す。raw_json は巨大化するためAPI応答には含めない。
+const PROFILE_SELECT_COLUMNS = `
+  id, student_number, notion_page_id, gender, birth_date, final_education,
+  current_job, job_type, monthly_income, disposable_income, savings, debt,
+  has_card, work_history, part_time_history, prefecture, cohabitants,
+  has_partner, partner_understanding, sales_classification,
+  has_streaming_experience, streaming_history, streaming_equipment,
+  motivation, company_reason, contribution, vtuber_effort, other_auditions,
+  desired_streaming, vtuber_passion, medical_history, status, contract_plan,
+  synced_at
+`;
+
+const syncExecutionState = {
+  running: false,
+  startedAt: null,
+  lastRunAt: null,
+  lastResult: null,
+  lastError: null,
+};
+
 // ============================================================
 // Notion プロパティ値を安全に取り出すユーティリティ
 // ============================================================
@@ -206,12 +226,53 @@ async function syncNotionProfiles() {
   return { total: allPages.length, saved };
 }
 
+function markSyncStarted() {
+  syncExecutionState.running = true;
+  syncExecutionState.startedAt = new Date();
+  syncExecutionState.lastError = null;
+}
+
+async function executeMarkedSync() {
+  try {
+    const result = await syncNotionProfiles();
+    syncExecutionState.lastResult = result;
+    syncExecutionState.lastRunAt = new Date();
+    return result;
+  } catch (err) {
+    syncExecutionState.lastError = err.message;
+    throw err;
+  } finally {
+    syncExecutionState.running = false;
+  }
+}
+
+// 定期ジョブ用。手動同期と重複する場合は新しい同期を開始しない。
+async function runNotionProfilesSync() {
+  if (syncExecutionState.running) return { alreadyRunning: true };
+  markSyncStarted();
+  return executeMarkedSync();
+}
+
+// HTTP接続を同期完了まで保持しないためのバックグラウンド起動。
+function startNotionProfilesSync() {
+  if (syncExecutionState.running) return false;
+  markSyncStarted();
+  setImmediate(() => {
+    executeMarkedSync().catch(err => {
+      console.error('[NotionSync] background error:', err.message);
+    });
+  });
+  return true;
+}
+
 // ============================================================
 // GET /api/notion/profiles  全件一覧
 // ============================================================
 router.get('/profiles', authenticateToken, (req, res) => {
   const rows = db.prepare(
-    'SELECT * FROM notion_profiles ORDER BY student_number ASC'
+    `SELECT ${PROFILE_SELECT_COLUMNS}
+     FROM notion_profiles
+     ORDER BY student_number ASC`
   ).all();
   res.json(rows);
 });
@@ -221,7 +282,9 @@ router.get('/profiles', authenticateToken, (req, res) => {
 // ============================================================
 router.get('/profiles/:studentNumber', authenticateToken, (req, res) => {
   const row = db.prepare(
-    'SELECT * FROM notion_profiles WHERE student_number = ?'
+    `SELECT ${PROFILE_SELECT_COLUMNS}
+     FROM notion_profiles
+     WHERE student_number = ?`
   ).get(req.params.studentNumber);
   if (!row) return res.status(404).json({ error: 'Not found' });
   res.json(row);
@@ -230,17 +293,12 @@ router.get('/profiles/:studentNumber', authenticateToken, (req, res) => {
 // ============================================================
 // POST /api/notion/sync  手動同期（admin only）
 // ============================================================
-router.post('/sync', authenticateToken, async (req, res) => {
+router.post('/sync', authenticateToken, (req, res) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ error: 'admin only' });
   }
-  try {
-    const result = await syncNotionProfiles();
-    res.json({ ok: true, ...result });
-  } catch (err) {
-    console.error('[NotionSync] error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  const started = startNotionProfilesSync();
+  res.status(202).json({ ok: true, started, running: true });
 });
 
 // ============================================================
@@ -250,8 +308,18 @@ router.get('/sync-status', authenticateToken, (req, res) => {
   const row = db.prepare(
     'SELECT MAX(synced_at) as last_synced, COUNT(*) as total FROM notion_profiles'
   ).get();
-  res.json(row);
+  res.json({
+    ...row,
+    running: syncExecutionState.running,
+    started_at: syncExecutionState.startedAt?.toISOString() || null,
+    last_run_at: syncExecutionState.lastRunAt?.toISOString() || null,
+    last_saved: syncExecutionState.lastResult?.saved ?? null,
+    last_total: syncExecutionState.lastResult?.total ?? null,
+    last_error: syncExecutionState.lastError,
+  });
 });
 
 module.exports = router;
 module.exports.syncNotionProfiles = syncNotionProfiles;
+module.exports.runNotionProfilesSync = runNotionProfilesSync;
+module.exports.syncExecutionState = syncExecutionState;

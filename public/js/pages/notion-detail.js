@@ -161,8 +161,25 @@ const NotionDetailPage = {
 
     try {
       const res = await API.notion.sync();
-      Utils.notify(`同期完了: ${res.saved}件保存しました`, 'success');
+      Utils.notify(res.started ? 'Notion同期を開始しました' : 'Notion同期は既に実行中です', 'info');
+
+      // サーバー側の同期はバックグラウンド実行。完了まで状態APIを確認する。
+      let status = null;
+      for (let attempt = 0; attempt < 90; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        status = await API.notion.syncStatus();
+        this.syncStatus = status;
+        this.renderSyncStatus();
+        if (!status.running) break;
+      }
+
+      if (status?.running) {
+        throw new Error('同期処理が続いています。しばらく後にページを再読み込みしてください');
+      }
+      if (status?.last_error) throw new Error(status.last_error);
+
       await Promise.all([this.loadProfiles(), this.loadSyncStatus()]);
+      Utils.notify(`同期完了: ${status?.last_saved ?? status?.total ?? 0}件保存しました`, 'success');
     } catch (err) {
       Utils.notify('同期エラー: ' + err.message, 'error');
     } finally {
