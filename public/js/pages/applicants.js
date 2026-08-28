@@ -8,6 +8,7 @@ const ApplicantsPage = {
   interviewDates: {}, // { applicant_key: 'YYYY-MM-DD' }
   surpriseCallMap: {}, // { student_number: [row, ...] } サプライズコール紐づけ
   notionProfileMap: {}, // { student_number: notionProfile } Notionプロファイル紐づけ
+  notionProfileByPageId: {}, // { normalized_page_id: notionProfile } Notion URL照合用
   visibleHeaders: [],
   allSheetHeaders: [], // 非表示列を含む全列ヘッダー（rawキー順）
   currentPage: 1,
@@ -279,11 +280,14 @@ const ApplicantsPage = {
         if (!this.surpriseCallMap[sn]) this.surpriseCallMap[sn] = [];
         this.surpriseCallMap[sn].push(row);
       }
-      // Notionプロファイル: student_number → プロファイルのMap構築
+      // Notionプロファイル: 学籍番号とNotionページIDの両方でMap構築
       this.notionProfileMap = {};
+      this.notionProfileByPageId = {};
       for (const p of (Array.isArray(notionData) ? notionData : [])) {
         const sn = (p.student_number || '').trim();
         if (sn) this.notionProfileMap[sn] = p;
+        const pageId = this._normalizeNotionPageId(p.notion_page_id);
+        if (pageId) this.notionProfileByPageId[pageId] = p;
       }
       this.error = null;
       this.renderCacheBadge();
@@ -583,6 +587,44 @@ const ApplicantsPage = {
       return !!aName && !!rName && aName === rName;
     });
     return matches.sort((x, y) => y.id - x.id);
+  },
+
+  // Notion APIのUUIDと共有URL内の32桁IDを同じ形式に揃える。
+  _normalizeNotionPageId(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+
+    const uuidMatches = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g);
+    if (uuidMatches?.length) return uuidMatches[uuidMatches.length - 1].replace(/-/g, '');
+
+    const withoutQuery = raw.split(/[?#]/, 1)[0];
+    const compactMatch = withoutQuery.match(/([0-9a-f]{32})$/);
+    return compactMatch ? compactMatch[1] : '';
+  },
+
+  // 最新報告に学籍番号がなくても、過去報告に保存済みなら利用する。
+  _firstStudentNumber(reports) {
+    for (const report of (reports || [])) {
+      const studentNumber = String(report?.student_number || '').trim();
+      if (studentNumber) return studentNumber;
+    }
+    return '';
+  },
+
+  // 学籍番号を優先し、該当しない場合は保存済みNotion URLのページIDで照合する。
+  _notionProfileForReports(reports) {
+    const studentNumber = this._firstStudentNumber(reports);
+    if (studentNumber && this.notionProfileMap[studentNumber]) {
+      return this.notionProfileMap[studentNumber];
+    }
+
+    for (const report of (reports || [])) {
+      const pageId = this._normalizeNotionPageId(report?.notion_url);
+      if (pageId && this.notionProfileByPageId[pageId]) {
+        return this.notionProfileByPageId[pageId];
+      }
+    }
+    return null;
   },
 
   filterAndRender() {
@@ -1501,7 +1543,7 @@ const ApplicantsPage = {
     for (const a of list) {
       const reps = this.getReportsForApplicant(a);
       if (reps.length > maxReports) maxReports = reps.length;
-      const sn   = (reps[0]?.student_number || '').trim();
+      const sn   = this._firstStudentNumber(reps);
       const sc   = sn ? (this.surpriseCallMap[sn] || []) : [];
       if (sc.length > maxSc) maxSc = sc.length;
     }
@@ -1536,15 +1578,15 @@ const ApplicantsPage = {
       const appKey    = this._applicantKey(a);
       const dateVal   = this.interviewDates[appKey] || '';
       const allReps   = this.getReportsForApplicant(a);  // 新しい順
-      const studentNum = (allReps[0]?.student_number || '').trim();
+      const studentNum = this._firstStudentNumber(allReps);
       const scAll     = studentNum ? (this.surpriseCallMap[studentNum] || []) : [];
       // SC は新しいもの優先（タイムスタンプ降順）
       const scSorted  = [...scAll].sort((x, y) =>
         (y['タイムスタンプ'] || '').localeCompare(x['タイムスタンプ'] || '')
       );
 
-      // Notionプロファイルを学籍番号で引く（報告の学籍番号優先、なければスキップ）
-      const notionProfile = this.notionProfileMap[studentNum] || null;
+      // 学籍番号で引けない場合は、営業報告に保存済みのNotion URLで引く。
+      const notionProfile = this._notionProfileForReports(allReps);
 
       const row = [
         a.full_name  || '',
