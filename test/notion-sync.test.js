@@ -6,20 +6,49 @@ process.env.NODE_ENV = 'test';
 process.env.NOTION_API_KEY = 'test-notion-key';
 process.env.NOTION_DATABASE_ID = 'test-notion-database';
 
-const { after, beforeEach, test } = require('node:test');
+const { after, before, beforeEach, test } = require('node:test');
 const assert = require('node:assert/strict');
+const express = require('express');
+const jwt = require('jsonwebtoken');
 
 const db = require('../src/database');
-const { syncNotionProfiles } = require('../src/routes/notion');
+const notionRouter = require('../src/routes/notion');
+const { syncNotionProfiles, syncExecutionState } = notionRouter;
 
 const originalFetch = global.fetch;
+const app = express();
+app.use(express.json());
+app.use('/api/notion', notionRouter);
 
-after(() => {
+let server;
+let baseUrl;
+const token = jwt.sign(
+  { id: 1, login_id: 'admin', name: '管理者', role: 'admin' },
+  process.env.JWT_SECRET,
+  { expiresIn: '1h' }
+);
+const headers = {
+  Authorization: `Bearer ${token}`,
+  'Content-Type': 'application/json',
+};
+
+before(async () => {
+  await new Promise(resolve => {
+    server = app.listen(0, '127.0.0.1', () => {
+      baseUrl = `http://127.0.0.1:${server.address().port}`;
+      resolve();
+    });
+  });
+});
+
+after(async () => {
   global.fetch = originalFetch;
+  await new Promise(resolve => server.close(resolve));
   db.close();
 });
 
 beforeEach(() => {
+  assert.equal(syncExecutionState.running, false);
   db.exec('DELETE FROM notion_profiles');
 });
 
@@ -103,4 +132,75 @@ test('後から学籍番号が設定されたNotionページは同じレコー�
   const rows = db.prepare('SELECT * FROM notion_profiles').all();
   assert.equal(rows.length, 1);
   assert.equal(rows[0].student_number, 'N-100');
+});
+
+test('プロファイル一覧APIは巨大なraw_jsonをレスポンスに含めない', async () => {
+  db.prepare(`
+    INSERT INTO notion_profiles (
+      student_number, notion_page_id, monthly_income, raw_json
+    ) VALUES (?, ?, ?, ?)
+  `).run(
+    null,
+    '99999999-8888-7777-6666-555555555555',
+    '280000',
+    JSON.stringify({ payload: 'x'.repeat(1024 * 1024) })
+  );
+
+  const response = await originalFetch(`${baseUrl}/api/notion/profiles`, { headers });
+  const profiles = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(profiles.length, 1);
+  assert.equal(profiles[0].monthly_income, '280000');
+  assert.equal(Object.hasOwn(profiles[0], 'raw_json'), false);
+});
+
+test('手動同期APIは完了を待たず202を返し、状態APIで完了を確認できる', async () => {
+  let releaseNotionRequest;
+  global.fetch = () => new Promise(resolve => {
+    releaseNotionRequest = () => resolve({
+      ok: true,
+      json: async () => ({
+        results: [notionPage({
+          id: '12121212-3434-5656-7878-909090909090',
+          monthlyIncome: 310000,
+        })],
+        has_more: false,
+      }),
+    });
+  });
+
+  const response = await originalFetch(`${baseUrl}/api/notion/sync`, {
+    method: 'POST',
+    headers,
+    body: '{}',
+  });
+  const started = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(started.started, true);
+  assert.equal(started.running, true);
+
+  const runningResponse = await originalFetch(`${baseUrl}/api/notion/sync-status`, { headers });
+  const runningStatus = await runningResponse.json();
+  assert.equal(runningStatus.running, true);
+
+  for (let attempt = 0; attempt < 20 && !releaseNotionRequest; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(typeof releaseNotionRequest, 'function');
+  releaseNotionRequest();
+
+  let completedStatus;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const statusResponse = await originalFetch(`${baseUrl}/api/notion/sync-status`, { headers });
+    completedStatus = await statusResponse.json();
+    if (!completedStatus.running) break;
+  }
+
+  assert.equal(completedStatus.running, false);
+  assert.equal(completedStatus.last_error, null);
+  assert.equal(completedStatus.last_saved, 1);
+  assert.equal(completedStatus.total, 1);
 });
