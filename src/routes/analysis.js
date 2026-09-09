@@ -143,18 +143,7 @@ router.post('/run', authenticateToken, async (req, res) => {
       sr.join_reasons, sr.decline_reasons, sr.details,
       sr.student_number,
       sr.created_at,
-      COALESCE(root.created_at, sr.created_at) AS first_created_at,
-      (SELECT MIN(
-          COALESCE(
-            NULLIF(ns.interview_date, ''),
-            DATE(COALESCE(ns_root.created_at, ns.created_at), '+9 hours')
-          )
-        )
-        FROM sales_reports ns
-        LEFT JOIN sales_reports ns_root ON ns_root.id = ns.parent_id
-        WHERE COALESCE(ns.parent_id, ns.id) = COALESCE(sr.parent_id, sr.id)
-          AND ns.result = '飛び'
-      ) AS first_noshow_date
+      COALESCE(root.created_at, sr.created_at) AS first_created_at
     FROM sales_reports sr
     LEFT JOIN sales_reports root ON root.id = sr.parent_id
     WHERE COALESCE(

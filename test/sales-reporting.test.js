@@ -107,11 +107,19 @@ test('ケース3: 別予約として別日に2回飛んだ場合は2件', async 
   assert.equal(data.total_noshow, 2);
 });
 
-test('同じ営業報告チェーン内で別日に飛びを追記しても1件', async () => {
+test('追記・新規報告から別日の飛びを保存しても集計される', async () => {
   const rootId = addReport({ date: '2026-08-27', result: '飛び' });
-  addReport({ date: '2026-08-29', result: '飛び', parentId: rootId });
+  const response = await fetch(`${baseUrl}/api/sales-reports/${rootId}`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ interview_date: '2026-08-29', result: '飛び' }),
+  });
+  const responseText = await response.text();
+  assert.equal(response.status, 200, responseText);
+  assert.equal(JSON.parse(responseText).parent_id, rootId);
+
   const data = await summary();
-  assert.equal(data.total_noshow, 1);
+  assert.equal(data.total_noshow, 2);
 });
 
 test('ケース4: 飛びの後日に追記した契約は契約1・面接1・CVR100%', async () => {
@@ -291,7 +299,7 @@ test('担当者別比較は担当者ごとの面接・契約・飛びを返す',
   ]);
 });
 
-test('担当者別比較でも同じ営業報告チェーンの複数飛びは1件', async () => {
+test('担当者別比較でも追記した別日の飛びをそれぞれ集計する', async () => {
   const rootId = addReport({ date: '2026-08-27', result: '飛び', interviewer: '営業B' });
   addReport({ date: '2026-08-29', result: '飛び', interviewer: '営業B', parentId: rootId });
   const params = new URLSearchParams({
@@ -306,5 +314,5 @@ test('担当者別比較でも同じ営業報告チェーンの複数飛びは1�
 
   assert.equal(data.length, 1);
   assert.equal(data[0].interviewer_name, '営業B');
-  assert.equal(data[0].total_noshow, 1);
+  assert.equal(data[0].total_noshow, 2);
 });

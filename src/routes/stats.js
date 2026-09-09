@@ -10,8 +10,6 @@ const {
   RESULT_AI_RECOMMEND,
   sqlMetricDate,
   sqlEventKey,
-  sqlFirstNoShowDate,
-  sqlNoShowEventKey,
 } = require('../services/reportMetrics');
 
 // ============================================================
@@ -24,9 +22,7 @@ const AI_RECOMMEND_CONDITION = `sr.result = '${RESULT_AI_RECOMMEND}'`;
 const INTERVIEW_CONDITION  = `NOT (${NOSHOW_CONDITION}) AND NOT (${AI_RECOMMEND_CONDITION})`;
 const EVENT_KEY            = sqlEventKey('sr');
 const METRIC_DATE          = sqlMetricDate('sr');
-const FIRST_NOSHOW_DATE    = sqlFirstNoShowDate('sr');
-const NOSHOW_EVENT_KEY     = sqlNoShowEventKey('sr');
-const FIRST_NOSHOW_CONDITION = `(${NOSHOW_CONDITION}) AND ${METRIC_DATE} = ${FIRST_NOSHOW_DATE}`;
+const NOSHOW_EVENT_KEY     = EVENT_KEY;
 
 function isIsoDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
@@ -278,7 +274,7 @@ router.get('/weekly', authenticateToken, (req, res) => {
       COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) as total_interviews,
       COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) as total_contracts,
       COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) as total_coolingoff,
-      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) as total_noshow,
+      COUNT(DISTINCT CASE WHEN ${NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) as total_noshow,
       COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) as total_ai_recommend
     ${baseSQL}
     GROUP BY period
@@ -310,7 +306,7 @@ router.get('/monthly', authenticateToken, (req, res) => {
       COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) as total_interviews,
       COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) as total_contracts,
       COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) as total_coolingoff,
-      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) as total_noshow,
+      COUNT(DISTINCT CASE WHEN ${NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) as total_noshow,
       COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) as total_ai_recommend
     ${baseSQL}
     GROUP BY period
@@ -390,7 +386,7 @@ router.get('/summary', authenticateToken, (req, res) => {
       COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) AS total_interviews,
       COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) AS total_contracts,
       COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) AS total_coolingoff,
-      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) AS total_noshow,
+      COUNT(DISTINCT CASE WHEN ${NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) AS total_noshow,
       COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) AS total_ai_recommend,
       COUNT(DISTINCT CASE WHEN COALESCE(sr.result, '') != '${RESULT_COOLING_OFF}' THEN ${EVENT_KEY} END) AS sales_report_reservations
     ${baseSQL}
@@ -459,7 +455,7 @@ router.get('/all-periods', authenticateToken, (req, res) => {
       COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) as total_interviews,
       COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) as total_contracts,
       COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) as total_coolingoff,
-      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) as total_noshow,
+      COUNT(DISTINCT CASE WHEN ${NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) as total_noshow,
       COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) as total_ai_recommend
     ${baseSQL}
     GROUP BY period
@@ -502,7 +498,7 @@ router.get('/by-interviewer', authenticateToken, (req, res) => {
       COALESCE(NULLIF(TRIM(sr.interviewer_name), ''), '不明') AS interviewer_name,
       COUNT(DISTINCT CASE WHEN ${INTERVIEW_CONDITION} THEN ${EVENT_KEY} END) AS total_interviews,
       COUNT(DISTINCT CASE WHEN ${CONTRACT_CONDITION} THEN ${EVENT_KEY} END) AS total_contracts,
-      COUNT(DISTINCT CASE WHEN ${FIRST_NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) AS total_noshow,
+      COUNT(DISTINCT CASE WHEN ${NOSHOW_CONDITION} THEN ${NOSHOW_EVENT_KEY} END) AS total_noshow,
       COUNT(DISTINCT CASE WHEN ${COOLINGOFF_CONDITION} THEN ${EVENT_KEY} END) AS total_coolingoff,
       COUNT(DISTINCT CASE WHEN ${AI_RECOMMEND_CONDITION} THEN ${EVENT_KEY} END) AS total_ai_recommend
     ${baseSQL}
