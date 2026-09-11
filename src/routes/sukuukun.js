@@ -46,6 +46,99 @@ function excelHeaderRow(headers) {
   }));
 }
 
+function parseStoredJson(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch (e) {
+    return value;
+  }
+}
+
+function formatStructuredText(value, indent = '') {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    return value.map((item, index) => {
+      const formatted = formatStructuredText(item, `${indent}  `);
+      return `${indent}${index + 1}. ${formatted.trimStart()}`;
+    }).join('\n');
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value).map(([key, item]) => {
+      if (item && typeof item === 'object') {
+        return `${indent}${key}:\n${formatStructuredText(item, `${indent}  `)}`;
+      }
+      return `${indent}${key}: ${item ?? ''}`;
+    }).join('\n');
+  }
+  return String(value);
+}
+
+function formatEvaluationResult(value) {
+  const result = parseStoredJson(value);
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return formatStructuredText(result);
+  }
+
+  const lines = [];
+  if (result.total_score !== null && result.total_score !== undefined) {
+    lines.push(`総合スコア: ${result.total_score}/100`);
+  }
+  if (result.summary) lines.push(`総合コメント:\n${result.summary}`);
+
+  const scoreLabels = {
+    rapport: 'ラポール構築',
+    hearing: 'ヒアリング',
+    value_proposal: '価値提案',
+    closing: 'クロージング',
+    overall_flow: '全体の流れ',
+  };
+  const scoreLines = Object.entries(scoreLabels).flatMap(([key, label]) => {
+    const score = result.scores?.[key];
+    if (!score) return [];
+    const details = [`${label}: ${score.score ?? '-'}/20`];
+    if (score.good) details.push(`  良かった点: ${score.good}`);
+    if (score.improve) details.push(`  改善点: ${score.improve}`);
+    return details;
+  });
+  if (scoreLines.length) lines.push(`各項目の採点:\n${scoreLines.join('\n')}`);
+
+  if (Array.isArray(result.highlights) && result.highlights.length) {
+    lines.push(`注目の発言:\n${result.highlights.map((item, index) => `${index + 1}. ${item}`).join('\n')}`);
+  }
+  if (result.template_output) lines.push(`すくう君レポート:\n${result.template_output}`);
+
+  const knownKeys = new Set(['total_score', 'scores', 'summary', 'highlights', 'template_output']);
+  const otherEntries = Object.entries(result).filter(([key]) => !knownKeys.has(key));
+  if (otherEntries.length) {
+    lines.push(`その他の評価項目:\n${formatStructuredText(Object.fromEntries(otherEntries))}`);
+  }
+
+  return lines.length ? lines.join('\n\n') : formatStructuredText(result);
+}
+
+function formatReferenceSources(value) {
+  const sources = parseStoredJson(value);
+  if (!Array.isArray(sources)) return formatStructuredText(sources);
+  return sources.map((source, index) => {
+    if (!source || typeof source !== 'object') return `${index + 1}. ${source ?? ''}`;
+    const title = source.title || source.name || `ソース${index + 1}`;
+    const id = source.id !== null && source.id !== undefined ? `（ID: ${source.id}）` : '';
+    return `${index + 1}. ${title}${id}`;
+  }).join('\n');
+}
+
+function formatImprovementActions(value) {
+  const actions = parseStoredJson(value);
+  if (!Array.isArray(actions)) return formatStructuredText(actions);
+  return actions.map((action, index) => `${index + 1}. ${formatStructuredText(action)}`).join('\n');
+}
+
+function wrappedExcelText(value) {
+  return { value: value || '', wrap: true, alignVertical: 'top' };
+}
+
 function callGemini(systemPrompt, userMessage, apiKey) {
   return new Promise((resolve, reject) => {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -461,7 +554,7 @@ router.get('/export', authenticateToken, async (req, res) => {
     const evaluationHeaders = [
       'ID', '対象日時（日本時間）', '応募者名', '応募者キー',
       '採点実行者ID', '採点実行者名', '面接担当者ID', '面接担当者名', '面接結果',
-      '文字数', '総合スコア', '評価結果JSON', '参照ソースJSON',
+      '文字数', '総合スコア', '評価結果', '参照ソース',
     ];
     const speechHeaders = [
       'ID', '対象日時（日本時間）', '応募者名', '応募者キー',
@@ -470,14 +563,15 @@ router.get('/export', authenticateToken, async (req, res) => {
       '最長連続発話秒数', '3分超モノローグ回数', '5分超モノローグ回数',
       '応募者ターン数', '15秒超無言回数', '講師からの割り込み回数',
       '応募者からの割り込み回数', '困惑率', 'ストレス率', 'ポジティブ率',
-      '改善アドバイス', '改善アクションJSON',
+      '改善アドバイス', '改善アクション',
     ];
 
     const evaluationRows = evaluations.map(row => [
       row.id, row.target_at, row.applicant_name, row.applicant_key,
       row.evaluator_id, row.evaluator_name, row.interviewer_id, row.interviewer_name,
       row.interview_result, row.transcript_length, row.total_score,
-      row.result_json, row.source_snapshot,
+      wrappedExcelText(formatEvaluationResult(row.result_json)),
+      wrappedExcelText(formatReferenceSources(row.source_snapshot)),
     ]);
     const speechRows = speeches.map(row => [
       row.id, row.target_at, row.applicant_name, row.applicant_key,
@@ -487,7 +581,7 @@ router.get('/export', authenticateToken, async (req, res) => {
       row.applicant_turn_count, row.silence_over_15s,
       row.sales_interrupts, row.applicant_interrupts,
       row.emotion_confusion, row.emotion_stress, row.emotion_positive,
-      row.advice, row.actions,
+      row.advice, wrappedExcelText(formatImprovementActions(row.actions)),
     ]);
 
     const workbook = await writeXlsxFile([
