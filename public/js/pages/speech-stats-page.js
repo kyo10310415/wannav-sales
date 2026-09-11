@@ -22,7 +22,7 @@ const SpeechStatsPage = {
         </div>
         <button class="btn btn-sm" onclick="SukuukunExport.open()"
           style="background:#059669;border-color:#059669;color:white;white-space:nowrap">
-          <i class="fas fa-file-csv"></i> 過去データCSV
+          <i class="fas fa-file-excel"></i> 過去データExcel
         </button>
       </div>
       <div class="page-body">

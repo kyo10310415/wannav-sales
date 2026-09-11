@@ -143,7 +143,7 @@ const API = {
     evaluate: (data)  => API.post('/sukuukun/evaluate', data),
     // data: { transcript, metrics, interviewer_id, interviewer_name, applicant_name, analyzed_at }
     analyzeSpeech: (data) => API.post('/sukuukun/analyze-speech', data),
-    exportHistoryCsv: async (opts) => {
+    exportHistoryExcel: async (opts) => {
       const params = new URLSearchParams({
         date_from: opts?.dateFrom || '',
         date_to: opts?.dateTo || '',
@@ -160,6 +160,8 @@ const API = {
       return {
         blob: await response.blob(),
         count: Number(response.headers.get('X-Export-Record-Count') || 0),
+        evaluationCount: Number(response.headers.get('X-Export-Evaluation-Count') || 0),
+        speechCount: Number(response.headers.get('X-Export-Speech-Count') || 0),
       };
     },
     speechStats: {
