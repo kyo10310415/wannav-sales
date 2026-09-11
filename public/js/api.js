@@ -143,6 +143,25 @@ const API = {
     evaluate: (data)  => API.post('/sukuukun/evaluate', data),
     // data: { transcript, metrics, interviewer_id, interviewer_name, applicant_name, analyzed_at }
     analyzeSpeech: (data) => API.post('/sukuukun/analyze-speech', data),
+    exportHistoryCsv: async (opts) => {
+      const params = new URLSearchParams({
+        date_from: opts?.dateFrom || '',
+        date_to: opts?.dateTo || '',
+      });
+      const response = await fetch(`/api/sukuukun/export?${params.toString()}`, {
+        headers: API.getHeaders(),
+      });
+      if (!response.ok) {
+        const json = await response.json().catch(() => ({}));
+        const error = new Error(json.error || `HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      return {
+        blob: await response.blob(),
+        count: Number(response.headers.get('X-Export-Record-Count') || 0),
+      };
+    },
     speechStats: {
       // 担当者別月次集計 opts: { month: 'YYYY-MM' }
       summary: (opts) => {

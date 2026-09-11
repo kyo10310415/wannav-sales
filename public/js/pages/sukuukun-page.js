@@ -19,6 +19,10 @@ const SukuukunPage = {
             <div class="page-subtitle">Gemini AI による営業トーク採点・評価システム</div>
           </div>
         </div>
+        <button class="btn btn-sm" onclick="SukuukunExport.open()"
+          style="background:#059669;border-color:#059669;color:white;white-space:nowrap">
+          <i class="fas fa-file-csv"></i> 過去データCSV
+        </button>
       </div>
       <div class="page-body">
         <!-- タブ -->
