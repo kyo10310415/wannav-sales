@@ -1,4 +1,4 @@
-// すくう君採点・発話比率履歴 共通CSVエクスポート
+// すくう君採点・発話比率履歴 共通Excelエクスポート
 const SukuukunExport = {
   _localDate(date) {
     const pad = value => String(value).padStart(2, '0');
@@ -18,13 +18,13 @@ const SukuukunExport = {
       <div class="modal" style="max-width:520px;width:94vw" onclick="event.stopPropagation()">
         <div class="modal-header">
           <div class="modal-title">
-            <i class="fas fa-file-csv" style="color:#059669;margin-right:7px"></i>過去データCSVエクスポート
+            <i class="fas fa-file-excel" style="color:#059669;margin-right:7px"></i>過去データExcelエクスポート
           </div>
           <button class="modal-close" onclick="SukuukunExport.close()"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
           <div style="font-size:12px;color:var(--gray-500);line-height:1.7;margin-bottom:16px">
-            指定期間の「すくう君採点履歴」と「発話比率履歴」を1つのCSVに出力します。
+            指定期間の履歴を、1つのExcelファイル内の「すくう君」「発話比率」シートに分けて出力します。
             日付は日本時間で判定します。
           </div>
           <div id="sukuukun-export-error" class="alert alert-error" style="display:none;margin-bottom:12px"></div>
@@ -45,7 +45,7 @@ const SukuukunExport = {
           <button class="btn btn-secondary" onclick="SukuukunExport.close()">キャンセル</button>
           <button class="btn" id="sukuukun-export-download" onclick="SukuukunExport.download()"
             style="background:#059669;border-color:#059669;color:white">
-            <i class="fas fa-download"></i> CSVをダウンロード
+            <i class="fas fa-download"></i> Excelをダウンロード
           </button>
         </div>
       </div>`;
@@ -80,17 +80,17 @@ const SukuukunExport = {
     }
 
     try {
-      const { blob, count } = await API.sukuukun.exportHistoryCsv({ dateFrom, dateTo });
+      const { blob, evaluationCount, speechCount } = await API.sukuukun.exportHistoryExcel({ dateFrom, dateTo });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `すくう君・発話比率履歴_${dateFrom.replace(/-/g, '')}_${dateTo.replace(/-/g, '')}.csv`;
+      anchor.download = `すくう君・発話比率履歴_${dateFrom.replace(/-/g, '')}_${dateTo.replace(/-/g, '')}.xlsx`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
       this.close();
-      Utils.notify(`CSVをダウンロードしました（${count}件）`, 'success');
+      Utils.notify(`Excelをダウンロードしました（すくう君 ${evaluationCount}件／発話比率 ${speechCount}件）`, 'success');
     } catch (error) {
       if (errorEl) {
         errorEl.style.display = 'flex';
@@ -98,7 +98,7 @@ const SukuukunExport = {
       }
       if (button) {
         button.disabled = false;
-        button.innerHTML = '<i class="fas fa-download"></i> CSVをダウンロード';
+        button.innerHTML = '<i class="fas fa-download"></i> Excelをダウンロード';
       }
     }
   },

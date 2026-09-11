@@ -7,6 +7,7 @@ process.env.NODE_ENV = 'test';
 const { after, before, beforeEach, test } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const { strFromU8, unzipSync } = require('fflate');
 const jwt = require('jsonwebtoken');
 
 const db = require('../src/database');
@@ -43,7 +44,16 @@ beforeEach(() => {
   db.exec('DELETE FROM sukuukun_evaluations; DELETE FROM sukuukun_speech_analyses;');
 });
 
-test('指定した日本時間の日付に含まれる採点・発話比率履歴を1つのCSVに出力する', async () => {
+function getSheetStrings(files, sheetPath) {
+  const sharedStringsXml = strFromU8(files['xl/sharedStrings.xml']);
+  const sharedStrings = [...sharedStringsXml.matchAll(/<t(?: [^>]*)?>([\s\S]*?)<\/t>/g)]
+    .map(match => match[1]);
+  const sheetXml = strFromU8(files[sheetPath]);
+  return [...sheetXml.matchAll(/<c [^>]*t="s"[^>]*><v>(\d+)<\/v><\/c>/g)]
+    .map(match => sharedStrings[Number(match[1])]);
+}
+
+test('指定した日本時間の日付に含まれる採点・発話比率履歴を別シートでExcel出力する', async () => {
   db.prepare(`
     INSERT INTO sukuukun_evaluations (
       applicant_name, applicant_key, evaluator_name, interviewer_name,
@@ -75,20 +85,34 @@ test('指定した日本時間の日付に含まれる採点・発話比率履�
     { headers }
   );
   const bytes = new Uint8Array(await response.arrayBuffer());
-  const csv = new TextDecoder().decode(bytes);
 
-  assert.equal(response.status, 200, csv);
-  assert.match(response.headers.get('content-type'), /^text\/csv/);
+  assert.equal(response.status, 200);
+  assert.equal(
+    response.headers.get('content-type'),
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
   assert.equal(response.headers.get('x-export-record-count'), '2');
-  assert.deepEqual([...bytes.slice(0, 3)], [0xEF, 0xBB, 0xBF]);
-  assert.match(csv, /すくう君採点/);
-  assert.match(csv, /発話比率/);
-  assert.match(csv, /2026-09-02 00:30:00/);
-  assert.match(csv, /"'=採点対象"/);
-  assert.doesNotMatch(csv, /期間外/);
+  assert.equal(response.headers.get('x-export-evaluation-count'), '1');
+  assert.equal(response.headers.get('x-export-speech-count'), '1');
+  assert.deepEqual([...bytes.slice(0, 2)], [0x50, 0x4B]);
+
+  const files = unzipSync(bytes);
+  const workbookXml = strFromU8(files['xl/workbook.xml']);
+  const evaluationSheetXml = strFromU8(files['xl/worksheets/sheet1.xml']);
+  const evaluationStrings = getSheetStrings(files, 'xl/worksheets/sheet1.xml');
+  const speechStrings = getSheetStrings(files, 'xl/worksheets/sheet2.xml');
+
+  assert.match(workbookXml, /name="すくう君"/);
+  assert.match(workbookXml, /name="発話比率"/);
+  assert.ok(evaluationStrings.includes('=採点対象'));
+  assert.ok(evaluationStrings.includes('2026-09-02 00:30:00'));
+  assert.ok(!evaluationStrings.includes('期間外'));
+  assert.ok(speechStrings.includes('発話対象'));
+  assert.ok(!speechStrings.includes('=採点対象'));
+  assert.doesNotMatch(evaluationSheetXml, /<f(?:>| )/);
 });
 
-test('CSV出力は不正な期間を拒否する', async () => {
+test('Excel出力は不正な期間を拒否する', async () => {
   const response = await fetch(
     `${baseUrl}/api/sukuukun/export?date_from=2026-09-03&date_to=2026-09-02`,
     { headers }
