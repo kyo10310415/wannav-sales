@@ -62,7 +62,10 @@ test('指定した日本時間の日付に含まれる採点・発話比率履�
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     '=採点対象', 'eval@example.com', '評価者A', '営業A',
-    '契約', 1200, 88, '{"total_score":88}', '[]', '2026-09-01 15:30:00'
+    '契約', 1200, 88,
+    '{"total_score":88,"scores":{"rapport":{"score":18,"good":"会話が自然","improve":"質問を増やす"}},"summary":"良い面接でした","highlights":["印象的な発言"],"template_output":"提出用レポート"}',
+    '[{"id":1,"title":"営業台本"},{"id":2,"title":"面接ガイド"}]',
+    '2026-09-01 15:30:00'
   );
 
   db.prepare(`
@@ -72,7 +75,7 @@ test('指定した日本時間の日付に含まれる採点・発話比率履�
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     '営業B', '発話対象', 'speech@example.com', '2026-09-02T03:00:00.000Z',
-    60, 40, '改善案', '["質問を増やす"]', 1500
+    60, 40, '改善案', '["質問を増やす","相手の回答を待つ"]', 1500
   );
 
   db.prepare(`
@@ -107,8 +110,15 @@ test('指定した日本時間の日付に含まれる採点・発話比率履�
   assert.ok(evaluationStrings.includes('=採点対象'));
   assert.ok(evaluationStrings.includes('2026-09-02 00:30:00'));
   assert.ok(!evaluationStrings.includes('期間外'));
+  assert.ok(evaluationStrings.some(value => value.includes('総合スコア: 88/100')));
+  assert.ok(evaluationStrings.some(value => value.includes('ラポール構築: 18/20')));
+  assert.ok(evaluationStrings.some(value => value.includes('良かった点: 会話が自然')));
+  assert.ok(evaluationStrings.some(value => value.includes('1. 営業台本（ID: 1）')));
+  assert.ok(!evaluationStrings.some(value => value.includes('"total_score"')));
   assert.ok(speechStrings.includes('発話対象'));
   assert.ok(!speechStrings.includes('=採点対象'));
+  assert.ok(speechStrings.some(value => value.includes('1. 質問を増やす\n2. 相手の回答を待つ')));
+  assert.ok(!speechStrings.some(value => value.includes('["質問を増やす"')));
   assert.doesNotMatch(evaluationSheetXml, /<f(?:>| )/);
 });
 
