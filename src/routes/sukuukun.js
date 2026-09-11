@@ -30,6 +30,20 @@ function extractGeminiText(body) {
   return textParts.join('') || '';
 }
 
+function isIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function csvCell(value) {
+  if (value === null || value === undefined) return '""';
+  let text = String(value);
+  // Excel等で開いた際に、外部入力が数式として実行されるのを防ぐ。
+  if (typeof value === 'string' && /^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 function callGemini(systemPrompt, userMessage, apiKey) {
   return new Promise((resolve, reject) => {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -406,6 +420,90 @@ router.get('/history', authenticateToken, (req, res) => {
   sql += ' ORDER BY created_at DESC LIMIT 50';
   const rows = db.prepare(sql).all(...params);
   res.json(rows);
+});
+
+// GET /api/sukuukun/export — 採点履歴・発話比率履歴を期間指定でCSV出力
+router.get('/export', authenticateToken, (req, res) => {
+  const { date_from, date_to } = req.query;
+  if (!isIsoDate(date_from) || !isIsoDate(date_to) || date_from > date_to) {
+    return res.status(400).json({ error: '開始日と終了日を正しい順序で指定してください' });
+  }
+
+  try {
+    // created_at / analyzed_at はUTCで保存されるため、日本時間の日付で絞り込む。
+    const evaluations = db.prepare(`
+      SELECT id, applicant_name, applicant_key,
+             evaluator_id, evaluator_name, interviewer_id, interviewer_name,
+             interview_result, transcript_length, total_score,
+             result_json, source_snapshot,
+             DATETIME(created_at, '+9 hours') AS target_at
+      FROM sukuukun_evaluations
+      WHERE DATE(created_at, '+9 hours') BETWEEN ? AND ?
+      ORDER BY created_at DESC
+    `).all(date_from, date_to);
+
+    const speeches = db.prepare(`
+      SELECT id, interviewer_id, interviewer_name, applicant_name, applicant_key,
+             sales_ratio, applicant_ratio, sales_chars, applicant_chars,
+             max_monologue_sec, mono_3min_count, mono_5min_count,
+             applicant_turn_count, silence_over_15s,
+             sales_interrupts, applicant_interrupts,
+             emotion_confusion, emotion_stress, emotion_positive,
+             advice, actions, transcript_length,
+             DATETIME(analyzed_at, '+9 hours') AS target_at
+      FROM sukuukun_speech_analyses
+      WHERE DATE(analyzed_at, '+9 hours') BETWEEN ? AND ?
+      ORDER BY analyzed_at DESC
+    `).all(date_from, date_to);
+
+    const headers = [
+      'データ種別', 'ID', '対象日時（日本時間）', '応募者名', '応募者キー',
+      '採点実行者ID', '採点実行者名', '面接担当者ID', '面接担当者名', '面接結果',
+      '文字数', '総合スコア', '評価結果JSON', '参照ソースJSON',
+      '講師発話率', '応募者発話率', '講師文字数', '応募者文字数',
+      '最長連続発話秒数', '3分超モノローグ回数', '5分超モノローグ回数',
+      '応募者ターン数', '15秒超無言回数', '講師からの割り込み回数',
+      '応募者からの割り込み回数', '困惑率', 'ストレス率', 'ポジティブ率',
+      '改善アドバイス', '改善アクションJSON',
+    ];
+
+    const rows = [
+      ...evaluations.map(row => [
+        'すくう君採点', row.id, row.target_at, row.applicant_name, row.applicant_key,
+        row.evaluator_id, row.evaluator_name, row.interviewer_id, row.interviewer_name,
+        row.interview_result, row.transcript_length, row.total_score,
+        row.result_json, row.source_snapshot,
+        '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
+      ]),
+      ...speeches.map(row => [
+        '発話比率', row.id, row.target_at, row.applicant_name, row.applicant_key,
+        '', '', row.interviewer_id, row.interviewer_name, '',
+        row.transcript_length, '', '', '',
+        row.sales_ratio, row.applicant_ratio, row.sales_chars, row.applicant_chars,
+        row.max_monologue_sec, row.mono_3min_count, row.mono_5min_count,
+        row.applicant_turn_count, row.silence_over_15s,
+        row.sales_interrupts, row.applicant_interrupts,
+        row.emotion_confusion, row.emotion_stress, row.emotion_positive,
+        row.advice, row.actions,
+      ]),
+    ].sort((a, b) => String(b[2] || '').localeCompare(String(a[2] || '')));
+
+    const csv = '\uFEFF' + [headers, ...rows]
+      .map(row => row.map(csvCell).join(','))
+      .join('\r\n');
+    const filename = `sukuukun_history_${date_from.replace(/-/g, '')}_${date_to.replace(/-/g, '')}.csv`;
+
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+      'X-Export-Record-Count': String(rows.length),
+    });
+    res.send(csv);
+  } catch (err) {
+    console.error('[sukuukun] export error:', err);
+    res.status(500).json({ error: 'CSVの作成に失敗しました: ' + err.message });
+  }
 });
 
 // GET /api/sukuukun/history/:id — 履歴詳細

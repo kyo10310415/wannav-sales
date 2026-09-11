@@ -20,6 +20,10 @@ const SpeechStatsPage = {
           </div>
           <div class="page-subtitle">担当者別の発話分析平均（すくう君発話比率分析の蓄積データ）</div>
         </div>
+        <button class="btn btn-sm" onclick="SukuukunExport.open()"
+          style="background:#059669;border-color:#059669;color:white;white-space:nowrap">
+          <i class="fas fa-file-csv"></i> 過去データCSV
+        </button>
       </div>
       <div class="page-body">
 
