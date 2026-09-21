@@ -4,6 +4,7 @@ const SalesReportModal = {
   salesUsers: [],
   editingReport: null,
   editMode: 'overwrite', // 'overwrite'=内容編集（上書き）, 'append'=追記・新規報告
+  _openSequence: 0,
 
   // ── 選択肢定数 ──────────────────────────────────────────────
   INTERVIEW_CONTENT_OPTIONS: [
@@ -60,28 +61,67 @@ const SalesReportModal = {
   },
 
   async open(applicant, existingReport = null, sheetType = 'as') {
+    const openSequence = ++this._openSequence;
     this.applicant = applicant;
     this.editingReport = existingReport;
     this.sheetType = sheetType;  // 'as' | 'gh'
     this.editMode = 'overwrite'; // 編集時はデフォルト「上書き」
 
-    try {
-      this.salesUsers = await API.users.sales();
-    } catch (e) {
-      this.salesUsers = []
-    }
+    // 通信完了を待たず、まずモーダルを表示してクリックへの反応を返す。
+    const hasCachedUsers = Array.isArray(this.salesUsers) && this.salesUsers.length > 0;
+    this.renderModal(!hasCachedUsers);
+    document.getElementById('sr-interviewer')?.focus();
 
-    this.renderModal();
-    document.getElementById('sr-modal-overlay').style.display = 'flex';
-    document.getElementById('sr-interviewer').focus();
+    try {
+      const users = await API.users.sales();
+      if (openSequence !== this._openSequence || !document.getElementById('sr-modal-overlay')) return;
+      this.salesUsers = Array.isArray(users) ? users : [];
+      this._updateInterviewerOptions();
+    } catch (e) {
+      if (openSequence !== this._openSequence || !document.getElementById('sr-modal-overlay')) return;
+      console.error('[SalesReportModal] sales users load failed:', e);
+      if (!hasCachedUsers) {
+        this.salesUsers = [];
+        this._updateInterviewerOptions('面接担当者を取得できませんでした。画面を再読み込みしてください');
+      }
+    }
   },
 
   close() {
+    this._openSequence += 1;
     const overlay = document.getElementById('sr-modal-overlay');
     if (overlay) overlay.remove();
   },
 
-  renderModal() {
+  _updateInterviewerOptions(errorMessage = '') {
+    const select = document.getElementById('sr-interviewer');
+    if (!select) return;
+
+    const selectedId = select.value || String(this.editingReport?.interviewer_id || '');
+    const users = Array.isArray(this.salesUsers) ? this.salesUsers : [];
+    const placeholder = errorMessage
+      ? errorMessage
+      : users.length > 0 ? '選択してください' : '対象ユーザーがいません';
+
+    select.innerHTML = `
+      <option value="">${Utils.escHtml(placeholder)}</option>
+      ${users.map(user =>
+        `<option value="${user.id}">${Utils.escHtml(user.name)}</option>`
+      ).join('')}`;
+    select.disabled = !!errorMessage;
+    if (users.some(user => String(user.id) === selectedId)) select.value = selectedId;
+
+    if (errorMessage) {
+      const errorEl = document.getElementById('sr-error');
+      if (errorEl) {
+        errorEl.style.display = 'flex';
+        errorEl.className = 'alert alert-error';
+        errorEl.innerHTML = `<i class="fas fa-exclamation-circle"></i><span>${Utils.escHtml(errorMessage)}</span>`;
+      }
+    }
+  },
+
+  renderModal(usersLoading = false) {
     const existingOverlay = document.getElementById('sr-modal-overlay');
     if (existingOverlay) existingOverlay.remove();
 
@@ -142,8 +182,8 @@ const SalesReportModal = {
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">面接担当者 <span class="required">*</span></label>
-                <select id="sr-interviewer" class="form-control">
-                  <option value="">選択してください</option>
+                <select id="sr-interviewer" class="form-control" ${usersLoading ? 'disabled' : ''}>
+                  <option value="">${usersLoading ? '面接担当者を読み込み中...' : '選択してください'}</option>
                   ${this.salesUsers.map(u =>
                     `<option value="${u.id}" ${r.interviewer_id == u.id ? 'selected' : ''}>${Utils.escHtml(u.name)}</option>`
                   ).join('')}
