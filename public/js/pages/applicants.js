@@ -1278,22 +1278,30 @@ const ApplicantsPage = {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   },
 
-  openSalesReport(safeId) {
+  async openSalesReport(safeId) {
     const a = this._cache?.[safeId];
     if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
-    SalesReportModal.open(a, null, this.activeTab || 'as');
+    try {
+      await SalesReportModal.open(a, null, this.activeTab || 'as');
+    } catch (error) {
+      console.error('[ApplicantsPage] sales report modal open failed:', error);
+      Utils.notify('営業報告画面を開けませんでした。画面を再読み込みしてください', 'error');
+    }
   },
 
   async editReport(safeId, reportId) {
     const a = this._cache?.[safeId];
     if (!a) { Utils.notify('データが見つかりません', 'error'); return; }
     try {
-      const report = await API.salesReports.get(reportId);
+      // 一覧取得済みの報告を優先し、モーダル表示前の不要な通信待ちをなくす。
+      const report = this.reports.find(item => Number(item.id) === Number(reportId))
+        || await API.salesReports.get(reportId);
       // 既存レポートのsheet_typeがあればそれを優先、なければ現在のタブを使用
       const sheetType = report.sheet_type || this.activeTab || 'as';
-      SalesReportModal.open(a, report, sheetType);
+      await SalesReportModal.open(a, report, sheetType);
     } catch (e) {
-      Utils.notify('エラーが発生しました', 'error');
+      console.error('[ApplicantsPage] sales report edit open failed:', e);
+      Utils.notify('営業報告画面を開けませんでした: ' + e.message, 'error');
     }
   },
 
