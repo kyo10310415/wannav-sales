@@ -5,6 +5,7 @@ const { EventEmitter } = require('node:events');
 const express = require('express');
 const https = require('https');
 process.env.JWT_SECRET = randomBytes(48).toString('hex');
+process.env.ONE_LOOP_TOKEN = 'test-only-one-loop-credential';
 const { generateToken } = require('../src/middleware/auth');
 const sent = [];
 const originalRequest = https.request;
@@ -72,4 +73,26 @@ test('invalid cursor/filter shapes cannot reach the upstream service', async () 
     assert.equal(response.status, 400);
   }
   assert.equal(sent.length, 0);
+});
+
+test('missing integration credential returns 503 without contacting upstream', async () => {
+  const old = process.env.ONE_LOOP_TOKEN;
+  try {
+    sent.length = 0;
+    delete process.env.ONE_LOOP_TOKEN;
+    const response = await fetch(origin + '/oneloop/applicants', { headers: headers('admin') });
+    assert.equal(response.status, 503);
+    assert.equal(sent.length, 0);
+    assert.equal((await response.text()).includes('test-only'), false);
+  } finally { process.env.ONE_LOOP_TOKEN = old; }
+});
+
+test('malformed integration credential fails closed before HTTPS request', async () => {
+  const old = process.env.ONE_LOOP_TOKEN;
+  try {
+    sent.length = 0;
+    process.env.ONE_LOOP_TOKEN = 'test-only\ninvalid';
+    assert.equal((await fetch(origin + '/oneloop/applicants', { headers: headers('admin') })).status, 503);
+    assert.equal(sent.length, 0);
+  } finally { process.env.ONE_LOOP_TOKEN = old; }
 });
