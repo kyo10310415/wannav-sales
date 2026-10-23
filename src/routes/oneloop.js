@@ -3,6 +3,10 @@ const router  = express.Router();
 const https   = require('https');
 const { authenticateToken } = require('../middleware/auth');
 
+// Temporarily disabled by the owner. Stop before any provider access.
+router.use(authenticateToken);
+router.use((_req, res) => res.status(410).json({ error: 'One Loop integration is temporarily disabled' }));
+
 // ============================================================
 // One Loop GraphQL プロキシ
 // ============================================================
