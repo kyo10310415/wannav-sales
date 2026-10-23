@@ -8,7 +8,7 @@ const { authenticateToken } = require('../middleware/auth');
 // ============================================================
 
 const ONE_LOOP_ENDPOINT = 'https://one-loop-staging.n2jk-apps.com/admin/graphql';
-const ONE_LOOP_TOKEN    = '6e85da826398fffa9f40d26ca91c8f9798f1239246eb2c58b5f7af9a56c81535';
+// The integration credential is supplied only through the runtime environment.
 
 /**
  * GraphQL クエリを One Loop に送信して結果を返すヘルパー
@@ -25,7 +25,7 @@ function queryOneLoop(query, variables) {
       headers: {
         'Content-Type':  'application/json',
         'Content-Length': Buffer.byteLength(payload),
-        'Authorization': `Bearer ${ONE_LOOP_TOKEN}`,
+        'Authorization': `Bearer ${process.env.ONE_LOOP_TOKEN.trim()}`,
       },
     };
 
@@ -57,6 +57,9 @@ const ONELOOP_PAGE_SIZE = 20;
 //   ?source=xxx  流入経路フィルタ（省略時: 全件）
 // ============================================================
 router.get('/applicants', authenticateToken, async (req, res) => {
+  if (!process.env.ONE_LOOP_TOKEN || !/^[\x21-\x7e]+$/.test(process.env.ONE_LOOP_TOKEN)) {
+    return res.status(503).json({ error: 'One Loop integration is not configured' });
+  }
   if ((req.query.all !== undefined && !['true', 'false'].includes(req.query.all)) ||
       (req.query.after !== undefined && (typeof req.query.after !== 'string' || req.query.after.length > 2048)) ||
       (req.query.source !== undefined && (typeof req.query.source !== 'string' || req.query.source.length > 256))) {
