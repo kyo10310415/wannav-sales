@@ -311,13 +311,14 @@ const App = {
         'width=600,height=700,scrollbars=yes,resizable=yes');
 
       const handler = async (event) => {
+        if (event.origin !== window.location.origin || event.source !== popup) return;
         if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
           window.removeEventListener('message', handler);
-          Utils.notify(`Google連携しました（${event.data.email}）`, 'success');
+          Utils.notify(`Google連携しました（${Utils.escHtml(event.data.email)}）`, 'success');
           this._mountGoogleBtn();
         } else if (event.data?.type === 'GOOGLE_AUTH_ERROR') {
           window.removeEventListener('message', handler);
-          Utils.notify('連携に失敗しました: ' + event.data.error, 'error');
+          Utils.notify('連携に失敗しました: ' + Utils.escHtml(event.data.error), 'error');
           this._mountGoogleBtn();
         }
       };

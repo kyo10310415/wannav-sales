@@ -1,4 +1,6 @@
 require('dotenv').config();
+// Validate authentication configuration before loading routes or opening the database.
+require('./src/middleware/auth');
 
 const express = require('express');
 const cors = require('cors');

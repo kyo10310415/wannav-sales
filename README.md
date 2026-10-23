@@ -29,8 +29,18 @@ cp .env.example .env
 ```
 
 必須設定:
-- `JWT_SECRET`: JWT署名用シークレットキー（必ず変更）
+- `JWT_SECRET`: 32バイト以上の非公開ランダム値。未設定・短い値・既知の初期値ではDBを開く前に起動を停止します。既存の十分な鍵は維持できます。鍵を交換すると既存のログインは無効になるため、再ログインが必要です。
 - `GOOGLE_SERVICE_ACCOUNT_JSON` または `GOOGLE_API_KEY`: Google API認証
+
+Googleカレンダーのユーザー連携では、`GOOGLE_REDIRECT_URI` を実際の本番URLの
+`/api/calendar/callback` に設定してください（未設定時は `RENDER_EXTERNAL_URL`、ローカルは
+`http://localhost:3000` を使用）。本番URLと同じオリジンで画面を開いてください。
+連携開始ごとに10分有効・単回使用のランダムstateを発行し、開始ブラウザの
+HttpOnly/SameSite=Lax Cookieに結び付けます。Cookieが無効なブラウザでは連携できません。
+stateは単一プロセスのメモリで保持するため、再起動やデプロイで進行中の連携は無効になります。
+その場合は画面から連携をやり直してください。複数インスタンス化する場合は、stateの期限管理と
+単回消費を共有ストアへ移す必要があります。既に保存済みのGoogle連携は変更しません。
+OAuth完了通知は同一オリジンの開始ポップアップからのみ受信し、外部エラー詳細は画面・ログへ出しません。
 
 ### ローカル起動
 ```bash
