@@ -105,3 +105,11 @@ GOOGLE_API_KEY=your-api-key
 | result | 結果 |
 | contract_plan | 契約プラン |
 | その他 | 各種情報 |
+
+## One LoopとNode.jsの保護（SEC-047/048）
+Node.js指定は22.23.4、enginesは`>=22.23.4 <23`です。RenderのNODE_VERSIONで上書きしている場合も同版以上の22系へそろえ、native SQLiteの古いキャッシュが残る場合はClear build cache & deployで再構築してください。
+
+任意GraphQLをサービス認証情報で中継する`POST /api/oneloop/graphql`を廃止しました。未認証は401、認証済みでも410となり、外部APIへ要求を送信しません。UIの任意クエリ実行欄も撤去しました。管理者も任意query・mutation・schema照会を中継できません。
+応募者一覧の閲覧・検索・source絞り込みは従来どおり利用できます。サーバー定義のGetApplicantsだけを実行し、first=20・最大50ページを維持します。cursor/sourceの型と長さも検証します。既存の応募者一覧閲覧権限は変更していません。
+
+既存のOne Loop認証情報のソース固定・過去公開（SEC-026）は別途所有者による失効・再発行が必要です。この変更で認証情報の有効性を試験したり、実応募者データを取得したりはしません。

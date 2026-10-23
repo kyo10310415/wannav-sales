@@ -56,7 +56,7 @@ const OneLoopPage = {
         <div style="display:flex;gap:4px;margin-bottom:16px;background:white;border-radius:10px;padding:4px;box-shadow:0 1px 4px rgba(0,0,0,0.08);width:fit-content">
           ${[
             { id: 'list',       icon: 'fa-table',     label: '応募者一覧' },
-            { id: 'playground', icon: 'fa-code',      label: 'GraphQL Playground' },
+            { id: 'playground', icon: 'fa-code',      label: '連携の利用範囲' },
           ].map(t => `
             <button onclick="OneLoopPage.switchTab('${t.id}')"
               style="padding:7px 16px;border-radius:7px;border:none;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all 0.15s;
@@ -193,64 +193,7 @@ const OneLoopPage = {
 
   // ── GraphQL Playground ペイン ─────────────────────────────
   _renderPlaygroundPane() {
-    return `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-
-        <!-- クエリ入力 -->
-        <div class="card">
-          <div class="card-header" style="background:#f0fdf4;border-bottom:1px solid #bbf7d0">
-            <div class="card-title" style="color:#166534">
-              <i class="fas fa-code" style="margin-right:6px"></i>GraphQL クエリ
-            </div>
-          </div>
-          <div class="card-body">
-            <textarea id="gql-query-input" rows="18"
-              class="form-control"
-              style="font-size:12px;font-family:'Courier New',monospace;line-height:1.6;resize:vertical"
-              placeholder="GraphQLクエリを入力...">${Utils.escHtml(this.queryText)}</textarea>
-            <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px">
-              <button class="btn btn-secondary btn-sm" onclick="OneLoopPage.resetQuery()">
-                <i class="fas fa-undo"></i> リセット
-              </button>
-              <button id="gql-run-btn" class="btn btn-sm" onclick="OneLoopPage.runQuery()"
-                style="background:#6366f1;border-color:#6366f1;color:white">
-                <i class="fas fa-play"></i> 実行
-              </button>
-            </div>
-
-            <!-- エンドポイント情報 -->
-            <div style="margin-top:14px;padding:10px 12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;font-size:11px;color:#64748b">
-              <div style="font-weight:600;margin-bottom:4px;color:#475569"><i class="fas fa-info-circle" style="margin-right:4px"></i>接続情報</div>
-              <div><span style="color:#94a3b8">Endpoint:</span> <code style="font-size:11px">https://one-loop-staging.n2jk-apps.com/admin/graphql</code></div>
-              <div style="margin-top:2px"><span style="color:#94a3b8">Auth:</span> <code style="font-size:11px">Bearer ****（サーバー側で付与）</code></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 結果表示 -->
-        <div class="card">
-          <div class="card-header" style="background:#fff7ed;border-bottom:1px solid #fed7aa">
-            <div class="card-title" style="color:#9a3412">
-              <i class="fas fa-terminal" style="margin-right:6px"></i>レスポンス
-            </div>
-          </div>
-          <div class="card-body" style="padding:0">
-            <div id="gql-result-area" style="padding:12px;min-height:300px">
-              ${this.gqlError ? `
-                <div class="alert alert-error" style="margin:0">${Utils.escHtml(this.gqlError)}</div>
-              ` : this.gqlResult ? `
-                <pre style="font-size:11px;margin:0;white-space:pre-wrap;overflow-x:auto;color:#1e293b;line-height:1.6">${Utils.escHtml(JSON.stringify(this.gqlResult, null, 2))}</pre>
-              ` : `
-                <div style="text-align:center;padding:48px;color:#9ca3af">
-                  <div style="font-size:32px;margin-bottom:10px">▶️</div>
-                  <div style="font-size:12px">クエリを入力して「実行」ボタンを押してください</div>
-                </div>
-              `}
-            </div>
-          </div>
-        </div>
-
-      </div>`;
+    return '<div class="card"><div class="card-body">応募者一覧の閲覧・検索・絞り込みを利用できます。任意GraphQLの実行機能は廃止しました。</div></div>';
   },
 
   // ── データ取得 ─────────────────────────────────────────────
@@ -283,65 +226,6 @@ const OneLoopPage = {
       this._rerenderListPane();
     } catch (e) {
       Utils.notify('追加取得に失敗しました: ' + e.message, 'error');
-    }
-  },
-
-  // ── GraphQL Playground 実行 ────────────────────────────────
-  async runQuery() {
-    const input = document.getElementById('gql-query-input');
-    if (!input) return;
-    this.queryText = input.value;
-
-    const btn = document.getElementById('gql-run-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 実行中…'; }
-
-    const resultArea = document.getElementById('gql-result-area');
-    if (resultArea) {
-      resultArea.innerHTML = `<div style="text-align:center;padding:48px;color:#9ca3af">
-        <i class="fas fa-spinner fa-spin" style="font-size:24px;margin-bottom:10px;display:block"></i>
-        <div style="font-size:12px">クエリを実行中…</div>
-      </div>`;
-    }
-
-    try {
-      const data = await API.post('/oneloop/graphql', { query: this.queryText });
-      this.gqlResult = data;
-      this.gqlError  = null;
-      if (resultArea) {
-        resultArea.innerHTML = `<pre style="font-size:11px;margin:0;white-space:pre-wrap;overflow-x:auto;color:#1e293b;line-height:1.6">${Utils.escHtml(JSON.stringify(data, null, 2))}</pre>`;
-      }
-    } catch (e) {
-      this.gqlError  = e.message;
-      this.gqlResult = null;
-      if (resultArea) {
-        resultArea.innerHTML = `<div class="alert alert-error" style="margin:0"><i class="fas fa-exclamation-circle"></i> ${Utils.escHtml(e.message)}</div>`;
-      }
-    } finally {
-      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-play"></i> 実行'; }
-    }
-  },
-
-  resetQuery() {
-    const input = document.getElementById('gql-query-input');
-    if (input) {
-      input.value = `{
-  applicants(first: 20) {
-    pageInfo { hasNextPage endCursor }
-    edges {
-      node {
-        id
-        firstName
-        lastName
-        email
-        phone
-        source
-        customFields
-        createdAt
-        updatedAt
-      }
-    }
-  }
-}`;
     }
   },
 
