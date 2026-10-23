@@ -1,6 +1,10 @@
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'wannav-sales-secret-key-2024';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (typeof JWT_SECRET !== 'string' || Buffer.byteLength(JWT_SECRET.trim()) < 32 ||
+    /^(?:wannav-sales-secret-key-2024|change[-_]?me|your[-_])/i.test(JWT_SECRET)) {
+  throw new Error('JWT_SECRET must be a private random value of at least 32 bytes');
+}
 
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -10,7 +14,7 @@ function authenticateToken(req, res, next) {
     return res.status(401).json({ error: '認証が必要です' });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'トークンが無効です' });
     }
@@ -36,7 +40,7 @@ function generateToken(user) {
       must_change_password: user.must_change_password
     },
     JWT_SECRET,
-    { expiresIn: '24h' }
+    { expiresIn: '24h', algorithm: 'HS256' }
   );
 }
 

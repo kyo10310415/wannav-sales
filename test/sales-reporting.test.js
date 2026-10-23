@@ -1,7 +1,7 @@
 'use strict';
 
 process.env.DB_PATH = ':memory:';
-process.env.JWT_SECRET = 'test-only-jwt-secret';
+process.env.JWT_SECRET = require('node:crypto').randomBytes(48).toString('hex');
 process.env.NODE_ENV = 'test';
 
 const { after, before, beforeEach, test } = require('node:test');

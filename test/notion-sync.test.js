@@ -1,7 +1,7 @@
 'use strict';
 
 process.env.DB_PATH = ':memory:';
-process.env.JWT_SECRET = 'test-only-jwt-secret';
+process.env.JWT_SECRET = require('node:crypto').randomBytes(48).toString('hex');
 process.env.NODE_ENV = 'test';
 process.env.NOTION_API_KEY = 'test-notion-key';
 process.env.NOTION_DATABASE_ID = 'test-notion-database';

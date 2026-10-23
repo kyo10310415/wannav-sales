@@ -5,6 +5,13 @@ const db = require('../database');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const spreadsheetCache = require('./spreadsheet').cache;
 const { syncCalendarEvents } = require('../services/calendarInterviewSync');
+const oauthState = require('../security/oauthState');
+const { responsePage } = require('../security/oauthResponse');
+
+function callbackOrigin() {
+  return new URL(process.env.GOOGLE_REDIRECT_URI || process.env.RENDER_EXTERNAL_URL ||
+    'http://localhost:3000').origin;
+}
 
 // ============================================================
 // OAuth2クライアント生成
@@ -166,7 +173,7 @@ router.get('/auth-url', authenticateToken, (req, res) => {
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
       ],
-      state: String(req.user.id), // コールバックでユーザーIDを特定
+      state: oauthState.issue(req, res, req.user.id, callbackOrigin().startsWith('https:')),
     });
     res.json({ ok: true, url });
   } catch (err) {
@@ -179,37 +186,30 @@ router.get('/auth-url', authenticateToken, (req, res) => {
 // Google OAuth コールバック。認可コードをトークンに交換してDBに保存
 // ============================================================
 router.get('/callback', async (req, res) => {
-  const { code, state, error } = req.query;
+  res.set('Cache-Control', 'no-store');
+  res.set('Referrer-Policy', 'no-referrer');
+  const { code, error } = req.query;
+  const userId = oauthState.consume(req);
+  if (!userId) return res.status(400).send('認証の開始情報が無効または期限切れです。もう一度連携してください。');
+  const respond = payload => res.send(responsePage(payload, callbackOrigin()));
 
   if (error) {
-    return res.send(`
-      <script>
-        window.opener && window.opener.postMessage(
-          { type: 'GOOGLE_AUTH_ERROR', error: '${error}' }, '*'
-        );
-        window.close();
-      </script>
-    `);
+    return respond({ type: 'GOOGLE_AUTH_ERROR', error: 'Google連携がキャンセルされたか、許可されませんでした。' });
   }
 
-  if (!code || !state) {
+  if (typeof code !== 'string' || !code) {
     return res.status(400).send('パラメータが不正です');
   }
 
   try {
+    if (!db.prepare('SELECT id FROM users WHERE id = ?').get(userId)) {
+      return res.status(400).send('連携対象のユーザーが見つかりません');
+    }
     const oauth2 = getOAuth2Client();
     const { tokens } = await oauth2.getToken(code);
 
     if (!tokens.refresh_token) {
-      return res.send(`
-        <script>
-          window.opener && window.opener.postMessage(
-            { type: 'GOOGLE_AUTH_ERROR',
-              error: 'リフレッシュトークンが取得できませんでした。もう一度試してください。' }, '*'
-          );
-          window.close();
-        </script>
-      `);
+      return respond({ type: 'GOOGLE_AUTH_ERROR', error: 'リフレッシュトークンが取得できませんでした。もう一度試してください。' });
     }
 
     // Googleアカウントのメールアドレスを取得
@@ -219,7 +219,6 @@ router.get('/callback', async (req, res) => {
     const googleEmail = userInfo.email || '';
 
     // DBにリフレッシュトークンを保存
-    const userId = parseInt(state, 10);
     db.prepare(`
       UPDATE users
       SET google_refresh_token = ?,
@@ -229,27 +228,10 @@ router.get('/callback', async (req, res) => {
     `).run(tokens.refresh_token, googleEmail, userId);
 
     // ポップアップを閉じて親ウィンドウに成功を通知
-    return res.send(`
-      <html><head><meta charset="utf-8"></head><body>
-      <p>連携が完了しました。このウィンドウは自動的に閉じます。</p>
-      <script>
-        window.opener && window.opener.postMessage(
-          { type: 'GOOGLE_AUTH_SUCCESS', email: '${googleEmail}' }, '*'
-        );
-        setTimeout(() => window.close(), 1500);
-      </script>
-      </body></html>
-    `);
+    return respond({ type: 'GOOGLE_AUTH_SUCCESS', email: googleEmail });
   } catch (err) {
-    console.error('OAuth callback error:', err);
-    return res.send(`
-      <script>
-        window.opener && window.opener.postMessage(
-          { type: 'GOOGLE_AUTH_ERROR', error: '${err.message}' }, '*'
-        );
-        window.close();
-      </script>
-    `);
+    console.error('OAuth callback failed');
+    return respond({ type: 'GOOGLE_AUTH_ERROR', error: 'Google連携に失敗しました。もう一度試してください。' });
   }
 });
 

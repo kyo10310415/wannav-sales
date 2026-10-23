@@ -71,7 +71,7 @@ test('旧notion_profilesを既存データを保ったままページIDキーへ
           ...process.env,
           DB_PATH: dbPath,
           NODE_ENV: 'test',
-          JWT_SECRET: 'test-only-jwt-secret',
+          JWT_SECRET: require('node:crypto').randomBytes(48).toString('hex'),
         },
         encoding: 'utf8',
       }
