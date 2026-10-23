@@ -57,6 +57,11 @@ const ONELOOP_PAGE_SIZE = 20;
 //   ?source=xxx  流入経路フィルタ（省略時: 全件）
 // ============================================================
 router.get('/applicants', authenticateToken, async (req, res) => {
+  if ((req.query.all !== undefined && !['true', 'false'].includes(req.query.all)) ||
+      (req.query.after !== undefined && (typeof req.query.after !== 'string' || req.query.after.length > 2048)) ||
+      (req.query.source !== undefined && (typeof req.query.source !== 'string' || req.query.source.length > 256))) {
+    return res.status(400).json({ error: 'Invalid applicant filters' });
+  }
   const fetchAll = req.query.all !== 'false'; // デフォルト true
   const after    = req.query.after  || null;
   const source   = req.query.source || null;
@@ -134,20 +139,11 @@ router.get('/applicants', authenticateToken, async (req, res) => {
 
 // ============================================================
 // POST /api/oneloop/graphql
-//   汎用 GraphQL プロキシ（テストページ用）
+//   Retired: never delegate the service credential to caller-supplied operations.
 //   body: { query: string, variables?: object }
 // ============================================================
-router.post('/graphql', authenticateToken, async (req, res) => {
-  const { query, variables } = req.body;
-  if (!query) return res.status(400).json({ error: 'query は必須です' });
-
-  try {
-    const result = await queryOneLoop(query, variables);
-    res.status(result.status).json(result.body);
-  } catch (err) {
-    console.error('[oneloop] graphql proxy error:', err);
-    res.status(500).json({ error: err.message });
-  }
+router.post('/graphql', authenticateToken, (_req, res) => {
+  res.status(410).json({ error: '任意GraphQL実行は廃止しました。応募者一覧を利用してください。' });
 });
 
 module.exports = router;
