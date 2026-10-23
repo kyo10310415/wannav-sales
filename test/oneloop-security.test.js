@@ -56,43 +56,13 @@ test('admin and normal users cannot forward arbitrary operations, variables or m
   }
   assert.equal(sent.length, 0);
 });
-test('existing applicant listing remains available with server-owned query and fixed page size', async () => {
+test('all One Loop routes stop before upstream for every authenticated role', async () => {
   sent.length = 0;
-  const response = await fetch(origin + '/oneloop/applicants?all=false&after=cursor&first=100000', { headers: headers('staff') });
-  assert.equal(response.status, 200);
-  const data = await response.json();
-  assert.equal(data.total, 1);
-  assert.deepEqual(sent[0].variables, { first: 20, after: 'cursor' });
-  assert.match(sent[0].query, /query GetApplicants/);
-  assert.doesNotMatch(sent[0].query, /mutation|__schema/);
-});
-test('invalid cursor/filter shapes cannot reach the upstream service', async () => {
-  sent.length = 0;
-  for (const suffix of ['?all=invalid', '?after[x]=y', '?source[x]=y', '?after='+'x'.repeat(2049), '?source='+'x'.repeat(257)]) {
-    const response = await fetch(origin + '/oneloop/applicants'+suffix, { headers: headers('admin') });
-    assert.equal(response.status, 400);
+  for (const role of ['admin', 'staff']) for (const path of ['/applicants', '/graphql', '/unknown']) {
+    for (const method of ['GET', 'POST']) {
+      const response = await fetch(origin + '/oneloop' + path, { method, headers: headers(role) });
+      assert.equal(response.status, 410);
+    }
   }
   assert.equal(sent.length, 0);
-});
-
-test('missing integration credential returns 503 without contacting upstream', async () => {
-  const old = process.env.ONE_LOOP_TOKEN;
-  try {
-    sent.length = 0;
-    delete process.env.ONE_LOOP_TOKEN;
-    const response = await fetch(origin + '/oneloop/applicants', { headers: headers('admin') });
-    assert.equal(response.status, 503);
-    assert.equal(sent.length, 0);
-    assert.equal((await response.text()).includes('test-only'), false);
-  } finally { process.env.ONE_LOOP_TOKEN = old; }
-});
-
-test('malformed integration credential fails closed before HTTPS request', async () => {
-  const old = process.env.ONE_LOOP_TOKEN;
-  try {
-    sent.length = 0;
-    process.env.ONE_LOOP_TOKEN = 'test-only\ninvalid';
-    assert.equal((await fetch(origin + '/oneloop/applicants', { headers: headers('admin') })).status, 503);
-    assert.equal(sent.length, 0);
-  } finally { process.env.ONE_LOOP_TOKEN = old; }
 });
