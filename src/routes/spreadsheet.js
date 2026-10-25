@@ -325,14 +325,14 @@ setTimeout(() => {
   getCachedData(false, cache, RANGE)
     .catch(err => {
       if (!err.message.includes('認証情報')) {
-        console.warn('[Cache warmup] アススタ Failed:', err.message);
+        console.warn('[Cache warmup] アススタ Failed');
       }
     })
     .then(() => new Promise(r => setTimeout(r, 2000)))
     .then(() => getCachedData(false, cacheGh, GH_RANGE))
     .catch(err => {
       if (!err.message.includes('認証情報')) {
-        console.warn('[Cache warmup] ゲーハイ Failed:', err.message);
+        console.warn('[Cache warmup] ゲーハイ Failed');
       }
     });
 }, 3000);
@@ -340,10 +340,10 @@ setTimeout(() => {
 // 1時間おきにバックグラウンド更新（順次・2秒間隔）
 setInterval(() => {
   getCachedData(true, cache, RANGE)
-    .catch(err => { console.warn('[Cache refresh] アススタ Failed:', err.message); })
+    .catch(err => { console.warn('[Cache refresh] アススタ Failed'); })
     .then(() => new Promise(r => setTimeout(r, 2000)))
     .then(() => getCachedData(true, cacheGh, GH_RANGE))
-    .catch(err => { console.warn('[Cache refresh] ゲーハイ Failed:', err.message); });
+    .catch(err => { console.warn('[Cache refresh] ゲーハイ Failed'); });
 }, CACHE_TTL_MS);
 
 // ============================================================
@@ -374,7 +374,7 @@ router.get('/applicants', authenticateToken, async (req, res) => {
       cache_age_seconds: cache.ageSeconds(),
     });
   } catch (err) {
-    console.error('Spreadsheet error:', err);
+    console.error('Spreadsheet request failed');
 
     // キャッシュが古くても返せるなら返す（フォールバック）
     if (cache.data) {
@@ -385,12 +385,12 @@ router.get('/applicants', authenticateToken, async (req, res) => {
         cached: true,
         cache_age_seconds: cache.ageSeconds(),
         stale: true,
-        error_message: err.message,
+        error_message: 'スプレッドシートの取得に失敗しました。',
       });
     }
 
     res.status(500).json({
-      error: 'スプレッドシートの取得に失敗しました: ' + err.message,
+      error: 'スプレッドシートの取得に失敗しました。',
     });
   }
 });
@@ -421,7 +421,7 @@ router.get('/applicants/gh', authenticateToken, async (req, res) => {
       cache_age_seconds: cacheGh.ageSeconds(),
     });
   } catch (err) {
-    console.error('Spreadsheet GH error:', err);
+    console.error('Spreadsheet GH request failed');
 
     if (cacheGh.data) {
       console.warn('[Cache GH] Returning stale cache due to error');
@@ -431,12 +431,12 @@ router.get('/applicants/gh', authenticateToken, async (req, res) => {
         cached: true,
         cache_age_seconds: cacheGh.ageSeconds(),
         stale: true,
-        error_message: err.message,
+        error_message: 'スプレッドシートの取得に失敗しました。',
       });
     }
 
     res.status(500).json({
-      error: 'スプレッドシート（ゲーハイ）の取得に失敗しました: ' + err.message,
+      error: 'スプレッドシート（ゲーハイ）の取得に失敗しました。',
     });
   }
 });
@@ -526,7 +526,7 @@ router.get('/applicants/count', authenticateToken, async (req, res) => {
       cache_age_seconds: (targetSheet === 'gh' ? cacheGh : cache).ageSeconds(),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message, count: 0, cv_count: 0 });
+    res.status(500).json({ error: 'スプレッドシートの集計に失敗しました。', count: 0, cv_count: 0 });
   }
 });
 
@@ -563,7 +563,7 @@ router.post('/cache-clear', authenticateToken, async (req, res) => {
       fetched_at: new Date(cache.fetchedAt).toISOString(),
     });
   } catch (err) {
-    res.status(500).json({ error: 'キャッシュ更新に失敗しました: ' + err.message });
+    res.status(500).json({ error: 'キャッシュ更新に失敗しました。' });
   }
 });
 
