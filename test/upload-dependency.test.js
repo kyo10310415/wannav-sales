@@ -8,11 +8,19 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../src/database');
 let parsed = 0;
-// Isolate multipart compatibility from the unchanged PDF parser implementation.
+// Isolate multipart compatibility; real PDF parsing is covered separately.
 const parserId = require.resolve('pdf-parse');
-require.cache[parserId] = { id: parserId, filename: parserId, loaded: true, exports: async buffer => {
-  parsed++; assert.ok(buffer.length > 0); return { text: 'Synthetic upload fixture content', numpages: 1 };
-} };
+let destroyed = 0;
+let failParsing = false;
+require.cache[parserId] = { id: parserId, filename: parserId, loaded: true, exports: { PDFParse: class {
+  constructor(options) { assert.ok(options.data.length > 0); assert.equal(options.isEvalSupported, false); }
+  async getText() {
+    parsed++;
+    if (failParsing) throw Error('sensitive fixture error must not escape');
+    return { text: 'Synthetic upload fixture content', total: 1 };
+  }
+  async destroy() { destroyed++; }
+} } };
 const app = express();
 app.use('/api/sukuukun', require('../src/routes/sukuukun'));
 app.use((error, req, res, next) => res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: 'invalid upload' }));
@@ -31,6 +39,17 @@ test('anonymous upload is denied before parsing or saving', async () => {
 test('authenticated multipart PDF reaches parser and in-memory storage', async () => {
   const response = await request(upload()); assert.equal(response.status, 200);
   const value = await response.json(); assert.equal(value.content, 'Synthetic upload fixture content'); assert.equal(value.pages, 1);
+  assert.equal(destroyed, 1);
+});
+
+test('parser is released on failure and details are not exposed', async () => {
+  failParsing = true;
+  const before = destroyed;
+  const response = await request(upload());
+  assert.equal(response.status, 500);
+  assert.ok(!(await response.text()).includes('sensitive fixture'));
+  assert.equal(destroyed, before + 1);
+  failParsing = false;
 });
 test('non-PDF and oversized uploads are rejected without invoking parser', async () => {
   const before = parsed;
