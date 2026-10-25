@@ -352,8 +352,14 @@ router.post('/sources/pdf', authenticateToken, upload.single('pdf'), async (req,
 
   try {
     // pdf-parse でテキスト抽出
-    const pdfParse = require('pdf-parse');
-    const parsed = await pdfParse(req.file.buffer);
+    const { PDFParse } = require('pdf-parse');
+    const parser = new PDFParse({ data: req.file.buffer, verbosity: 0, isEvalSupported: false });
+    let parsed;
+    try {
+      parsed = await parser.getText({ pageJoiner: '' });
+    } finally {
+      await parser.destroy();
+    }
     const content = parsed.text.trim();
 
     if (content.length < 10) {
@@ -366,10 +372,10 @@ router.post('/sources/pdf', authenticateToken, upload.single('pdf'), async (req,
     `).run(title, content, req.file.originalname, content.length);
 
     const row = db.prepare('SELECT * FROM sukuukun_sources WHERE id = ?').get(result.lastInsertRowid);
-    res.json({ ...row, pages: parsed.numpages });
+    res.json({ ...row, pages: parsed.total });
   } catch (err) {
-    console.error('[sukuukun] PDF parse error:', err);
-    res.status(500).json({ error: 'PDF解析エラー: ' + err.message });
+    console.error('[sukuukun] PDF parse failed');
+    res.status(500).json({ error: 'PDFを解析できませんでした。ファイルを確認してください。' });
   }
 });
 
