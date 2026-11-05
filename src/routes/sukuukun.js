@@ -322,6 +322,102 @@ router.get('/sources', authenticateToken, (req, res) => {
   res.json(rows);
 });
 
+// GET /api/sukuukun/sources/export?format=xlsx|txt — 現在の参照ソースを一括出力
+router.get('/sources/export', authenticateToken, async (req, res) => {
+  const format = String(req.query.format || '').toLowerCase();
+  if (!['xlsx', 'txt'].includes(format)) {
+    return res.status(400).json({ error: '出力形式は xlsx または txt を指定してください' });
+  }
+
+  try {
+    // すくう君がプロンプトへ組み込む順序と同じ、登録日時の昇順で出力する。
+    const sources = db.prepare(`
+      SELECT id, title, source_type, file_name, char_count, content, created_at, updated_at
+      FROM sukuukun_sources
+      ORDER BY created_at ASC, id ASC
+    `).all();
+    const date = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, '');
+
+    res.set({
+      'Cache-Control': 'no-store',
+      'X-Export-Record-Count': String(sources.length),
+    });
+
+    if (format === 'txt') {
+      const text = '\uFEFF' + sources.map((source, index) => [
+        `===== ソース ${index + 1} =====`,
+        `ID: ${source.id}`,
+        `タイトル: ${source.title || ''}`,
+        `種別: ${source.source_type === 'pdf' ? 'PDF' : 'テキスト'}`,
+        `元ファイル名: ${source.file_name || 'なし'}`,
+        `文字数: ${source.char_count ?? 0}`,
+        `登録日時: ${source.created_at || ''}`,
+        `更新日時: ${source.updated_at || ''}`,
+        '',
+        '--- 内容 ---',
+        source.content || '',
+      ].join('\r\n')).join('\r\n\r\n');
+
+      res.set({
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Disposition': `attachment; filename="sukuukun_sources_${date}.txt"`,
+      });
+      return res.send(text);
+    }
+
+    const headers = [
+      'ID', 'タイトル', '種別', '元ファイル名', '文字数',
+      '登録日時', '更新日時', '内容パート', '内容',
+    ];
+    // Excelの1セル上限（32,767文字）を超えるソースも欠落させないため、
+    // 本文だけを30,000文字ずつ複数行に分割する。
+    const rows = sources.flatMap(source => {
+      const content = source.content || '';
+      const chunks = [];
+      let offset = 0;
+      while (offset < content.length) {
+        let end = Math.min(offset + 30000, content.length);
+        // 絵文字などのサロゲートペアを分割位置で壊さない。
+        if (end < content.length && /[\uD800-\uDBFF]/.test(content.charAt(end - 1))) end--;
+        chunks.push(content.slice(offset, end));
+        offset = end;
+      }
+      if (chunks.length === 0) chunks.push('');
+
+      return chunks.map((chunk, index) => [
+        source.id,
+        source.title || '',
+        source.source_type === 'pdf' ? 'PDF' : 'テキスト',
+        source.file_name || '',
+        source.char_count ?? 0,
+        source.created_at || '',
+        source.updated_at || '',
+        `${index + 1}/${chunks.length}`,
+        wrappedExcelText(chunk),
+      ]);
+    });
+    const workbook = await writeXlsxFile([{
+      data: [excelHeaderRow(headers), ...rows],
+      sheet: '参照ソース',
+      columns: [
+        { width: 8 }, { width: 30 }, { width: 12 }, { width: 28 },
+        { width: 12 }, { width: 20 }, { width: 20 }, { width: 12 },
+        { width: 80 },
+      ],
+      stickyRowsCount: 1,
+    }], { fontFamily: 'Yu Gothic', fontSize: 10 }).toBuffer();
+
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="sukuukun_sources_${date}.xlsx"`,
+    });
+    return res.send(workbook);
+  } catch (err) {
+    console.error('[sukuukun] source export error:', err);
+    return res.status(500).json({ error: '参照ソースの出力に失敗しました: ' + err.message });
+  }
+});
+
 // GET /api/sukuukun/sources/:id — ソース詳細（content含む）
 router.get('/sources/:id', authenticateToken, (req, res) => {
   const row = db.prepare('SELECT * FROM sukuukun_sources WHERE id = ?').get(req.params.id);

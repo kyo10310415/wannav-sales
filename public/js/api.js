@@ -123,6 +123,21 @@ const API = {
       addText:   (data)     => API.post('/sukuukun/sources/text', data),
       update:    (id, data) => API.put(`/sukuukun/sources/${id}`, data),
       delete:    (id)       => API.delete(`/sukuukun/sources/${id}`),
+      exportAll: async (format) => {
+        const response = await fetch(`/api/sukuukun/sources/export?format=${encodeURIComponent(format)}`, {
+          headers: API.getHeaders(),
+        });
+        if (!response.ok) {
+          const json = await response.json().catch(() => ({}));
+          const error = new Error(json.error || `HTTP ${response.status}`);
+          error.status = response.status;
+          throw error;
+        }
+        return {
+          blob: await response.blob(),
+          count: Number(response.headers.get('X-Export-Record-Count') || 0),
+        };
+      },
       uploadPdf: (file, title) => {
         const token = API.getToken();
         const form = new FormData();
