@@ -180,9 +180,21 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
               <div class="card-title" style="color:#92400e;font-size:13px"><i class="fas fa-book-open" style="margin-right:5px"></i>ソース一覧</div>
               <span id="source-count-badge" style="font-size:11px;background:#fde68a;color:#92400e;border-radius:12px;padding:1px 8px;font-weight:700">0件</span>
             </div>
-            <div class="card-body" style="padding:8px" id="source-list-wrap">
-              <div style="text-align:center;padding:24px;color:#9ca3af;font-size:12px">
-                <i class="fas fa-spinner fa-spin"></i> 読み込み中...
+            <div class="card-body" style="padding:0">
+              <div style="padding:8px;border-bottom:1px solid #f3f4f6;display:flex;gap:6px;flex-wrap:wrap">
+                <button class="btn btn-sm" id="source-export-xlsx-btn" onclick="SukuukunPage.downloadSources('xlsx')"
+                  style="flex:1;min-width:100px;background:#059669;border-color:#059669;color:white;font-size:10px;padding:5px 7px">
+                  <i class="fas fa-file-excel"></i> Excel出力
+                </button>
+                <button class="btn btn-secondary btn-sm" id="source-export-txt-btn" onclick="SukuukunPage.downloadSources('txt')"
+                  style="flex:1;min-width:100px;font-size:10px;padding:5px 7px">
+                  <i class="fas fa-file-alt"></i> テキスト出力
+                </button>
+              </div>
+              <div style="padding:8px" id="source-list-wrap">
+                <div style="text-align:center;padding:24px;color:#9ca3af;font-size:12px">
+                  <i class="fas fa-spinner fa-spin"></i> 読み込み中...
+                </div>
               </div>
             </div>
           </div>
@@ -410,6 +422,47 @@ NotebookLM・音声認識ツール等で書き起こしたテキストをその�
     } catch (e) {
       const wrap = document.getElementById('source-list-wrap');
       if (wrap) wrap.innerHTML = `<div style="padding:12px;color:#dc2626;font-size:12px">${Utils.escHtml(e.message)}</div>`;
+    }
+  },
+
+  // ── 現在の参照ソースを一括出力 ────────────────────────
+  async downloadSources(format) {
+    if (!['xlsx', 'txt'].includes(format)) return;
+    if (this.sources.length === 0) {
+      Utils.notify('出力する参照ソースがありません', 'error');
+      return;
+    }
+
+    const btn = document.getElementById(`source-export-${format}-btn`);
+    const originalHtml = btn?.innerHTML;
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 出力中...';
+    }
+
+    try {
+      const { blob, count } = await API.sukuukun.sources.exportAll(format);
+      const now = new Date();
+      const pad = value => String(value).padStart(2, '0');
+      const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `すくう君_参照ソース_${date}.${format}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+
+      const label = format === 'xlsx' ? 'Excel' : 'テキスト';
+      Utils.notify(`参照ソースを${label}でダウンロードしました（${count}件）`, 'success');
+    } catch (e) {
+      Utils.notify('参照ソースの出力に失敗しました: ' + e.message, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
     }
   },
 
