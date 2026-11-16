@@ -17,6 +17,11 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Dedicated read-only integration, independently authenticated.
+app.use('/integrations/chatgpt/v1', require('./chatgpt-readonly/reader.cjs').expressHandler({
+  catalog: require('./chatgpt-readonly/sales-catalog.cjs'), sqlite: require('./src/database')
+}));
+
 // API Routes
 app.use('/api/auth', require('./src/routes/auth'));
 app.use('/api/users', require('./src/routes/users'));

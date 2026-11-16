@@ -1,0 +1,39 @@
+{
+  "reports": {
+    "title": "売上管理：報告行（追記・重複を含む。行数を面接数・成約数とみなさない）",
+    "sql": "SELECT sr.id,sr.parent_id,sr.student_number AS student_id,sr.applicant_full_name AS name,sr.interviewer_name,sr.result,sr.contract_plan,sr.details,sr.created_at,sr.updated_at,COALESCE(NULLIF(sr.interview_date,''),date(COALESCE(root.created_at,sr.created_at),'+9 hours')) AS metric_date FROM sales_reports sr LEFT JOIN sales_reports root ON root.id=sr.parent_id",
+    "fields": {
+      "id": "number",
+      "parent_id": "number",
+      "student_id": "text",
+      "name": "text",
+      "interviewer_name": "text",
+      "result": "text",
+      "contract_plan": "text",
+      "details": "text",
+      "created_at": "text",
+      "updated_at": "text",
+      "metric_date": "text"
+    },
+    "order": ["id"],
+    "history": "event"
+  },
+  "events": {
+    "title": "売上管理：同一人物・面接日で重複除去した業務イベント。各フラグの合計で面接数・成約数等を集計",
+    "fields": {
+      "id": "number",
+      "student_id": "text",
+      "name": "text",
+      "metric_date": "text",
+      "interviewer_name": "text",
+      "interviews": "number",
+      "contracts": "number",
+      "cooling_off": "number",
+      "no_shows": "number",
+      "ai_recommend": "number",
+      "reservations": "number"
+    },
+    "order": ["id"],
+    "history": "event"
+  }
+}
